@@ -1,0 +1,33 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.env
+.venv/
+venv/
+env/
+
+# Model weight files (large binaries — download at runtime)
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+
+# EasyOCR model cache
+~/.EasyOCR/
+
+# CLIP cache
+~/.cache/clip/
+
+dist/
+build/
+*.egg-info/
+.eggs/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+*.log
