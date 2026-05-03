@@ -42,7 +42,7 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
 
     # Vehicle detection
     try:
-        vehicle_type, vehicle_conf = detect_vehicle(
+        vehicle_type, vehicle_conf, vehicle_bbox = detect_vehicle(
             image,
             model_path=settings.yolo_model_path,
             confidence_threshold=settings.vehicle_confidence_threshold,
@@ -52,11 +52,17 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
         response.vehicle_confidence = vehicle_conf
     except Exception as exc:
         response.error = (response.error or "") + f" Vehicle detection failed: {exc}."
+        vehicle_bbox = None
 
-    # License plate OCR
+    # License plate OCR (using the cropped vehicle image to drastically improve accuracy)
     try:
+        ocr_image = image
+        if vehicle_bbox:
+            # Crop to the vehicle bounding box [x1, y1, x2, y2]
+            ocr_image = image.crop((vehicle_bbox[0], vehicle_bbox[1], vehicle_bbox[2], vehicle_bbox[3]))
+            
         plate, plate_conf = read_license_plate(
-            image,
+            ocr_image,
             languages=settings.ocr_languages,
             confidence_threshold=settings.plate_confidence_threshold,
         )

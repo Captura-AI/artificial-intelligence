@@ -26,6 +26,9 @@ build/
 *.egg-info/
 .eggs/
 
+# Datasets
+app/datasets/
+
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

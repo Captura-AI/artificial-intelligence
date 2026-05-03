@@ -55,6 +55,25 @@ def get_image_embedding(
     return features.squeeze(0).tolist()
 
 
+def get_text_embedding(
+    text: str,
+    model_name: str = "ViT-B/32",
+) -> Optional[list[float]]:
+    """
+    Generate a 512-dimensional CLIP embedding for the given text.
+    Returns a plain Python list of floats for Faiss search.
+    """
+    import clip
+    model, _, device = _get_model(model_name)
+
+    with torch.no_grad():
+        text_tensor = clip.tokenize([text]).to(device)
+        features = model.encode_text(text_tensor)
+        features = features / features.norm(dim=-1, keepdim=True)
+
+    return features.squeeze(0).tolist()
+
+
 def classify_scene_tags(
     image: Image.Image,
     model_name: str = "ViT-B/32",

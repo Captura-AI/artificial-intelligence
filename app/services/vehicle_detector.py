@@ -35,8 +35,8 @@ def detect_vehicle(
     Detect the dominant vehicle in the image using YOLOv8.
 
     Returns:
-        (vehicle_type, confidence) where vehicle_type is one of Captura's
-        VehicleTypeEnum values, or (None, None) if no vehicle is detected.
+        (vehicle_type, confidence, bbox) where vehicle_type is one of Captura's
+        VehicleTypeEnum values, bbox is [x1, y1, x2, y2], or (None, None, None) if no vehicle is detected.
     """
     if vehicle_class_ids is None:
         vehicle_class_ids = list(_COCO_TO_VEHICLE_TYPE.keys())
@@ -46,6 +46,7 @@ def detect_vehicle(
 
     best_class_id: Optional[int] = None
     best_conf: float = 0.0
+    best_bbox: Optional[list[int]] = None
 
     for result in results:
         for box in result.boxes:
@@ -59,11 +60,12 @@ def detect_vehicle(
             if conf > best_conf:
                 best_conf = conf
                 best_class_id = cls_id
+                best_bbox = [int(v) for v in box.xyxy[0].tolist()]
 
     if best_class_id is None:
-        return None, None
+        return None, None, None
 
-    return _COCO_TO_VEHICLE_TYPE.get(best_class_id, "OTHER"), round(best_conf, 4)
+    return _COCO_TO_VEHICLE_TYPE.get(best_class_id, "OTHER"), round(best_conf, 4), best_bbox
 
 
 def is_model_ready(model_path: str = "yolov8n.pt") -> bool:

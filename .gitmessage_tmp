@@ -1,0 +1,94 @@
+## Summary
+- Ticket: `N/A`
+- Change Type: `feat`
+- Scope: `ai-service`
+- Short Description:
+  - Add image analysis pipeline, CLIP embedder, YOLO vehicle detection, and Streamlit simulator.
+  - Add README.md documentation.
+
+## Problem Context / Root Cause
+- Current behavior:
+  - No AI service for Captura.
+- Expected behavior:
+  - AI service accurately extracting metadata from images.
+- Root cause:
+  - Initial implementation of AI service for backend integration.
+
+### Changed Areas
+- ai-service/app/services/*
+- ai-service/app/scripts/*
+- ai-service/README.md
+
+## Target Impact Matrix
+
+
+## Detailed Changes
+### 1) What Changed
+- File-level summary:
+  - app/services/: Added YOLOv8, EasyOCR, and CLIP integration.
+  - app/scripts/: Added Streamlit simulation and FAISS index build script.
+  - README.md: Added detailed setup and project structure documentation.
+- Behavior-level summary:
+  - Microservice can now receive an image URL and extract license plate, vehicle type, and CLIP embeddings.
+
+### 2) Why This Approach
+- To support high-accuracy image analysis before deploying fully to the backend, we created isolated AI microservices and a Streamlit simulator.
+
+### 3) Backward Compatibility
+- [x] No breaking change expected
+- [ ] Breaking change (explain below)
+
+If breaking change:
+- Affected consumers:
+  -
+- Migration notes:
+  -
+
+## Validation Evidence
+### Automated / Script Validation
+- Commands executed:
+```bash
+streamlit run app/scripts/simulate_search.py
+```
+- Results:
+  - UI loads and runs correctly.
+
+### Manual Validation
+- Steps:
+  1. Ran the server locally and checked endpoints.
+- Evidence (logs/screenshots/queries):
+  - Expected data returned on /health and /analyze.
+
+## Risks and Mitigation
+- Risk:
+  - High memory usage for AI models.
+- Mitigation:
+  - Lazy loading and sequential processing.
+- Monitoring after deploy:
+  - Observe memory consumption on the server.
+
+## Rollback Plan
+- Revert strategy:
+  - Revert this commit.
+- Data/config rollback needed:
+  - None
+- Rollback validation:
+  - N/A
+
+### Deployment Order
+1. Deploy ai-service.
+
+### Consistency Note
+- Confirm both repositories are deployed with matching compatible revisions.
+
+## Conventional Commit Used
+`feat(ai-service): implement image analysis pipeline, vehicle detection and CLIP embedding`
+
+## Pre-Merge Checklist
+- [x] Commit subject follows Conventional Commit format.
+- [x] MR description is complete and clear.
+- [x] Impacted repos are identified correctly.
+- [x] Impacted targets are listed explicitly.
+- [x] Risk and rollback plan are documented.
+- [x] Validation evidence is included.
+- [x] No credentials/secrets are exposed in this MR.

@@ -1,6 +1,7 @@
 import re
 from typing import Optional
 
+import numpy as np
 from PIL import Image
 
 _READER = None
@@ -47,7 +48,7 @@ def read_license_plate(
 
     reader = _get_reader(languages)
     results = reader.readtext(
-        image,
+        np.array(image),
         detail=1,
         paragraph=False,
         allowlist="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ",
