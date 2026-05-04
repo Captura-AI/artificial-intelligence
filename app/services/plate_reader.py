@@ -8,7 +8,8 @@ _READER = None
 _READER_LANGS: list[str] = []
 
 # Indonesian plate pattern: optional prefix letter(s), space, 1-4 digits, space, 1-3 letters
-_ID_PLATE_PATTERN = re.compile(r"\b([A-Z]{1,2})\s*(\d{1,4})\s*([A-Z]{1,3})\b", re.IGNORECASE)
+# We remove the strict word boundary (\b) to be more tolerant of OCR noise (e.g., "D 4644 LDO")
+_ID_PLATE_PATTERN = re.compile(r"([A-Z]{1,2})\s*(\d{1,4})\s*([A-Z]{1,3})", re.IGNORECASE)
 
 
 def _get_reader(languages: list[str]):

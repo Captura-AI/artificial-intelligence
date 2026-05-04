@@ -3,21 +3,22 @@
 - Change Type: `feat`
 - Scope: `ai-service`
 - Short Description:
-  - Add image analysis pipeline, CLIP embedder, YOLO vehicle detection, and Streamlit simulator.
-  - Add README.md documentation.
+  - Support multi-vehicle detection and improve OCR accuracy by relaxing regex bounds.
 
 ## Problem Context / Root Cause
 - Current behavior:
-  - No AI service for Captura.
+  - The pipeline only detects one vehicle per image and OCR misses some plates due to strict word boundaries (\b).
 - Expected behavior:
-  - AI service accurately extracting metadata from images.
+  - System extracts all vehicles in an image, crops each, and accurately performs OCR. OCR should handle slight noise.
 - Root cause:
-  - Initial implementation of AI service for backend integration.
+  - detect_vehicle returned only the top confidence result. _ID_PLATE_PATTERN used \b which failed when OCR detected noise alongside the plate text.
 
 ### Changed Areas
-- ai-service/app/services/*
-- ai-service/app/scripts/*
-- ai-service/README.md
+- ai-service/app/models/schemas.py
+- ai-service/app/services/analyzer.py
+- ai-service/app/services/plate_reader.py
+- ai-service/app/services/vehicle_detector.py
+- ai-service/app/scripts/build_index.py
 
 ## Target Impact Matrix
 
@@ -25,47 +26,49 @@
 ## Detailed Changes
 ### 1) What Changed
 - File-level summary:
-  - app/services/: Added YOLOv8, EasyOCR, and CLIP integration.
-  - app/scripts/: Added Streamlit simulation and FAISS index build script.
-  - README.md: Added detailed setup and project structure documentation.
+  - schemas.py: Replaced single vehicle properties with a list of VehicleDetection objects in AnalyzeResponse.
+  - vehicle_detector.py: Changed detect_vehicle to return a list of all vehicles exceeding the confidence threshold.
+  - plate_reader.py: Relaxed the regex pattern _ID_PLATE_PATTERN by removing \b.
+  - analyzer.py: Refactored to iterate over the detected_vehicles array, running OCR on cropped vehicle images independently.
+  - build_index.py: Adapted to consume the new detect_vehicle list output.
 - Behavior-level summary:
-  - Microservice can now receive an image URL and extract license plate, vehicle type, and CLIP embeddings.
+  - The API now returns a vehicles array, allowing multiple license plates to be extracted from a single image. OCR is more robust to noise.
 
 ### 2) Why This Approach
-- To support high-accuracy image analysis before deploying fully to the backend, we created isolated AI microservices and a Streamlit simulator.
+- Best practice dictates encapsulating vehicle properties into distinct objects. Expanding to multi-vehicle detection maximizes value extraction per image. Removing \b easily prevents OCR false-negatives due to random spacing/noise without complex post-processing.
 
 ### 3) Backward Compatibility
-- [x] No breaking change expected
-- [ ] Breaking change (explain below)
+- [ ] No breaking change expected
+- [x] Breaking change (explain below)
 
 If breaking change:
 - Affected consumers:
-  -
+  - Services/consumers reading the flat vehicle_type / license_plate fields.
 - Migration notes:
-  -
+  - Consumers must parse the vehicles JSON array instead of the old root-level scalar fields.
 
 ## Validation Evidence
 ### Automated / Script Validation
 - Commands executed:
 ```bash
-streamlit run app/scripts/simulate_search.py
+python -m app.scripts.build_index
 ```
 - Results:
-  - UI loads and runs correctly.
+  - Script successfully completes building the test index with multi-vehicle output.
 
 ### Manual Validation
 - Steps:
-  1. Ran the server locally and checked endpoints.
+  1. Ran the logic visually against multiple vehicles.
 - Evidence (logs/screenshots/queries):
-  - Expected data returned on /health and /analyze.
+  - Expected data returned as a list of vehicles.
 
 ## Risks and Mitigation
 - Risk:
-  - High memory usage for AI models.
+  - Higher processing time per image if many vehicles are detected (each invokes OCR).
 - Mitigation:
-  - Lazy loading and sequential processing.
+  - Confidence threshold prunes non-confident bounding boxes before OCR.
 - Monitoring after deploy:
-  - Observe memory consumption on the server.
+  - Observe processing_time_ms API latency.
 
 ## Rollback Plan
 - Revert strategy:
@@ -73,7 +76,7 @@ streamlit run app/scripts/simulate_search.py
 - Data/config rollback needed:
   - None
 - Rollback validation:
-  - N/A
+  - Test old script compatibility.
 
 ### Deployment Order
 1. Deploy ai-service.
@@ -82,7 +85,7 @@ streamlit run app/scripts/simulate_search.py
 - Confirm both repositories are deployed with matching compatible revisions.
 
 ## Conventional Commit Used
-`feat(ai-service): implement image analysis pipeline, vehicle detection and CLIP embedding`
+`feat(ai-service): support multi-vehicle detection and optimize OCR robustness`
 
 ## Pre-Merge Checklist
 - [x] Commit subject follows Conventional Commit format.

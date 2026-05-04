@@ -15,12 +15,17 @@ class ExifData(BaseModel):
     camera_make: Optional[str] = None
 
 
-class AnalyzeResponse(BaseModel):
-    moment_id: str
-    vehicle_type: Optional[str] = None
-    vehicle_confidence: Optional[float] = None
+class VehicleDetection(BaseModel):
+    vehicle_type: str
+    vehicle_confidence: float
+    bbox: list[int]
     license_plate: Optional[str] = None
     plate_confidence: Optional[float] = None
+
+
+class AnalyzeResponse(BaseModel):
+    moment_id: str
+    vehicles: list[VehicleDetection] = []
     embedding: Optional[list[float]] = None
     detected_tags: list[str] = []
     exif: ExifData = ExifData()

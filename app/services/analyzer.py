@@ -41,35 +41,41 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
         response.exif = ExifData()
 
     # Vehicle detection
+    detected_vehicles = []
     try:
-        vehicle_type, vehicle_conf, vehicle_bbox = detect_vehicle(
+        detected_vehicles = detect_vehicle(
             image,
             model_path=settings.yolo_model_path,
             confidence_threshold=settings.vehicle_confidence_threshold,
             vehicle_class_ids=settings.vehicle_class_ids,
         )
-        response.vehicle_type = vehicle_type
-        response.vehicle_confidence = vehicle_conf
     except Exception as exc:
         response.error = (response.error or "") + f" Vehicle detection failed: {exc}."
-        vehicle_bbox = None
 
-    # License plate OCR (using the cropped vehicle image to drastically improve accuracy)
-    try:
-        ocr_image = image
-        if vehicle_bbox:
-            # Crop to the vehicle bounding box [x1, y1, x2, y2]
-            ocr_image = image.crop((vehicle_bbox[0], vehicle_bbox[1], vehicle_bbox[2], vehicle_bbox[3]))
-            
-        plate, plate_conf = read_license_plate(
-            ocr_image,
-            languages=settings.ocr_languages,
-            confidence_threshold=settings.plate_confidence_threshold,
+    # Iterate over all detected vehicles for OCR
+    from ..models.schemas import VehicleDetection
+    
+    for v_type, v_conf, v_bbox in detected_vehicles:
+        vehicle_data = VehicleDetection(
+            vehicle_type=v_type,
+            vehicle_confidence=v_conf,
+            bbox=v_bbox
         )
-        response.license_plate = plate
-        response.plate_confidence = plate_conf
-    except Exception as exc:
-        response.error = (response.error or "") + f" Plate OCR failed: {exc}."
+        
+        try:
+            # Crop to the vehicle bounding box [x1, y1, x2, y2]
+            ocr_image = image.crop((v_bbox[0], v_bbox[1], v_bbox[2], v_bbox[3]))
+            plate, plate_conf = read_license_plate(
+                ocr_image,
+                languages=settings.ocr_languages,
+                confidence_threshold=settings.plate_confidence_threshold,
+            )
+            vehicle_data.license_plate = plate
+            vehicle_data.plate_confidence = plate_conf
+        except Exception as exc:
+            response.error = (response.error or "") + f" Plate OCR failed for vehicle {v_type}: {exc}."
+            
+        response.vehicles.append(vehicle_data)
 
     # CLIP embedding
     try:

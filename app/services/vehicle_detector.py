@@ -30,13 +30,14 @@ def detect_vehicle(
     model_path: str = "yolov8n.pt",
     confidence_threshold: float = 0.5,
     vehicle_class_ids: Optional[list[int]] = None,
-) -> tuple[Optional[str], Optional[float]]:
+) -> list[tuple[str, float, list[int]]]:
     """
-    Detect the dominant vehicle in the image using YOLOv8.
+    Detect vehicles in the image using YOLOv8.
 
     Returns:
-        (vehicle_type, confidence, bbox) where vehicle_type is one of Captura's
-        VehicleTypeEnum values, bbox is [x1, y1, x2, y2], or (None, None, None) if no vehicle is detected.
+        A list of tuples: (vehicle_type, confidence, bbox)
+        where vehicle_type is one of Captura's VehicleTypeEnum values,
+        and bbox is [x1, y1, x2, y2].
     """
     if vehicle_class_ids is None:
         vehicle_class_ids = list(_COCO_TO_VEHICLE_TYPE.keys())
@@ -44,9 +45,7 @@ def detect_vehicle(
     model = _get_model(model_path)
     results = model(image, verbose=False)
 
-    best_class_id: Optional[int] = None
-    best_conf: float = 0.0
-    best_bbox: Optional[list[int]] = None
+    detected_vehicles = []
 
     for result in results:
         for box in result.boxes:
@@ -57,15 +56,14 @@ def detect_vehicle(
                 continue
             if conf < confidence_threshold:
                 continue
-            if conf > best_conf:
-                best_conf = conf
-                best_class_id = cls_id
-                best_bbox = [int(v) for v in box.xyxy[0].tolist()]
+            
+            bbox = [int(v) for v in box.xyxy[0].tolist()]
+            vehicle_type = _COCO_TO_VEHICLE_TYPE.get(cls_id, "OTHER")
+            detected_vehicles.append((vehicle_type, round(conf, 4), bbox))
 
-    if best_class_id is None:
-        return None, None, None
-
-    return _COCO_TO_VEHICLE_TYPE.get(best_class_id, "OTHER"), round(best_conf, 4), best_bbox
+    # Sort by confidence descending
+    detected_vehicles.sort(key=lambda x: x[1], reverse=True)
+    return detected_vehicles
 
 
 def is_model_ready(model_path: str = "yolov8n.pt") -> bool:

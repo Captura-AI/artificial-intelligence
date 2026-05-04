@@ -65,20 +65,30 @@ def build_index(dataset_path: str, db_path: str, index_path: str, limit: int = 1
         try:
             image = Image.open(path).convert("RGB")
             
-            # Detect vehicle
-            vehicle_type, _, bbox = detect_vehicle(
+            # Detect vehicles
+            detected_vehicles = detect_vehicle(
                 image, 
                 model_path=settings.yolo_model_path, 
                 vehicle_class_ids=settings.vehicle_class_ids
             )
             
-            # Read Plate
-            plate = None
-            if bbox:
+            # Read Plates
+            vehicle_types = []
+            plates = []
+            for v_type, v_conf, bbox in detected_vehicles:
+                vehicle_types.append(v_type)
                 cropped = image.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
                 plate, _ = read_license_plate(cropped, languages=settings.ocr_languages)
-            else:
+                if plate:
+                    plates.append(plate)
+
+            if not detected_vehicles:
                 plate, _ = read_license_plate(image, languages=settings.ocr_languages)
+                if plate:
+                    plates.append(plate)
+
+            vehicle_type_str = ",".join(vehicle_types) if vehicle_types else "OTHER"
+            plate_str = ",".join(plates) if plates else None
 
             # Get Embedding
             embedding = get_image_embedding(image, model_name=settings.clip_model_name)
@@ -89,7 +99,7 @@ def build_index(dataset_path: str, db_path: str, index_path: str, limit: int = 1
             # Save to DB
             cursor.execute(
                 "INSERT OR REPLACE INTO images (id, filename, vehicle_type, license_plate, tags) VALUES (?, ?, ?, ?, ?)",
-                (i, str(path.absolute()), vehicle_type, plate, ",".join(tags))
+                (i, str(path.absolute()), vehicle_type_str, plate_str, ",".join(tags))
             )
             
             # Add to Faiss
