@@ -13,12 +13,23 @@ class Settings(BaseSettings):
     vehicle_confidence_threshold: float = 0.5
     plate_confidence_threshold: float = 0.4
 
+    # Plate detection / reading models
+    platdetect_model_path: str = "app/models/platdetect.pt"
+    platreader_model_path: str = "app/models/platreader.pt"
+    platdetect_confidence_threshold: float = 0.5
+
     # YOLO class IDs that correspond to vehicles
     # COCO dataset: 1=bicycle, 2=car, 3=motorcycle, 5=bus, 7=truck
     vehicle_class_ids: list[int] = [1, 2, 3, 5, 7]
 
     # Supported languages for OCR (Indonesian plates)
     ocr_languages: list[str] = ["en", "id"]
+
+    # Local storage for saved plate images (set PLATE_SAVE_DIR in .env to override)
+    plate_save_dir: str = "saved_plates"
+
+    # PostgreSQL connection string — override via DATABASE_URL in .env
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/captura"
 
     class Config:
         env_file = ".env"
