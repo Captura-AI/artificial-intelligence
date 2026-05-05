@@ -21,6 +21,7 @@ class VehicleDetection(BaseModel):
     bbox: list[int]
     license_plate: Optional[str] = None
     plate_confidence: Optional[float] = None
+    plate_image_path: Optional[str] = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -37,3 +38,13 @@ class HealthResponse(BaseModel):
     status: str
     version: str
     models_loaded: dict[str, bool]
+
+
+# ── Plate scan ───────────────────────────────────────────────────────────────
+
+class PlateScanResponse(BaseModel):
+    moment_id: str
+    plate_text: Optional[str] = None
+    confidence: Optional[float] = None
+    file_path: Optional[str] = None
+    error: Optional[str] = None
