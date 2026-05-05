@@ -23,6 +23,9 @@ openai-clip==1.0.1
 torch==2.5.1
 torchvision==0.20.1
 
+# Database
+psycopg2-binary==2.9.10
+
 # Utilities
 numpy==1.26.4
 opencv-python-headless==4.10.0.84
