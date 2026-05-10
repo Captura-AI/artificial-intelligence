@@ -27,6 +27,7 @@ class VehicleDetection(BaseModel):
 class AnalyzeResponse(BaseModel):
     moment_id: str
     vehicles: list[VehicleDetection] = []
+    saved_photo: Optional[str] = None
     embedding: Optional[list[float]] = None
     detected_tags: list[str] = []
     exif: ExifData = ExifData()
@@ -40,11 +41,10 @@ class HealthResponse(BaseModel):
     models_loaded: dict[str, bool]
 
 
-# ── Plate scan ───────────────────────────────────────────────────────────────
-
 class PlateScanResponse(BaseModel):
-    moment_id: str
-    plate_text: Optional[str] = None
+    uploader_id: str
     confidence: Optional[float] = None
-    file_path: Optional[str] = None
+    plates: list[str] = []
+    saved_photo: Optional[str] = None
+    saved_result_photo: Optional[str] = None
     error: Optional[str] = None
