@@ -16,7 +16,7 @@ async def analyze(
     Run the full AI analysis pipeline on a photo URL:
     - EXIF extraction (GPS, timestamp, camera)
     - Vehicle detection (YOLOv8)
-    - License plate OCR (EasyOCR)
+    - License plate detection + character reading (YOLOv8)
     - Image embedding (CLIP ViT-B/32)
     - Scene tag classification (CLIP zero-shot)
 
