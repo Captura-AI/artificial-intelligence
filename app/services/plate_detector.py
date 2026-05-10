@@ -19,7 +19,7 @@ def _get_model(model_path: str):
 def detect_plates(
     image: Image.Image,
     model_path: str = "platdetect.pt",
-    confidence_threshold: float = 0.5,
+    confidence_threshold: float = 0.25,
 ) -> list[tuple[float, list[int]]]:
     """
     Detect license plate bounding boxes in an image using platdetect.pt.
@@ -29,7 +29,8 @@ def detect_plates(
         where bbox is [x1, y1, x2, y2] in pixel coordinates.
     """
     model = _get_model(model_path)
-    results = model(image, verbose=False)
+    rgb_image = image if image.mode == "RGB" else image.convert("RGB")
+    results = model(rgb_image, conf=confidence_threshold, verbose=False)
 
     plates: list[tuple[float, list[int]]] = []
     for result in results:
