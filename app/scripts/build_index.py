@@ -19,7 +19,9 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 # and if it runs before PyTorch the two runtimes conflict and cause a segfault on macOS.
 from app.config import get_settings
 from app.services.vehicle_detector import detect_vehicle, is_model_ready as yolo_ready
-from app.services.plate_reader import read_license_plate, is_model_ready as ocr_ready
+from app.services.alpr_pipeline import find_best_plate
+from app.services.plate_detector import is_model_ready as platdetect_ready
+from app.services.plate_text_reader import is_model_ready as platreader_ready
 from app.services.clip_embedder import get_image_embedding, classify_scene_tags, is_model_ready as clip_ready
 
 import faiss
@@ -29,7 +31,8 @@ def build_index(dataset_path: str, db_path: str, index_path: str, limit: int = 1
     
     print("Warming up models...")
     yolo_ready(settings.yolo_model_path)
-    ocr_ready(settings.ocr_languages)
+    platdetect_ready(settings.platdetect_model_path)
+    platreader_ready(settings.platreader_model_path)
     clip_ready(settings.clip_model_name)
 
     # Initialize SQLite DB
@@ -78,14 +81,28 @@ def build_index(dataset_path: str, db_path: str, index_path: str, limit: int = 1
             for v_type, v_conf, bbox in detected_vehicles:
                 vehicle_types.append(v_type)
                 cropped = image.crop((bbox[0], bbox[1], bbox[2], bbox[3]))
-                plate, _ = read_license_plate(cropped, languages=settings.ocr_languages)
-                if plate:
-                    plates.append(plate)
+                result = find_best_plate(
+                    cropped,
+                    detector_model_path=settings.platdetect_model_path,
+                    reader_model_path=settings.platreader_model_path,
+                    detector_confidence_threshold=settings.platdetect_confidence_threshold,
+                    reader_confidence_threshold=settings.plate_confidence_threshold,
+                    padding_px=settings.plate_padding_px,
+                )
+                if result and result.text:
+                    plates.append(result.text)
 
             if not detected_vehicles:
-                plate, _ = read_license_plate(image, languages=settings.ocr_languages)
-                if plate:
-                    plates.append(plate)
+                result = find_best_plate(
+                    image,
+                    detector_model_path=settings.platdetect_model_path,
+                    reader_model_path=settings.platreader_model_path,
+                    detector_confidence_threshold=settings.platdetect_confidence_threshold,
+                    reader_confidence_threshold=settings.plate_confidence_threshold,
+                    padding_px=settings.plate_padding_px,
+                )
+                if result and result.text:
+                    plates.append(result.text)
 
             vehicle_type_str = ",".join(vehicle_types) if vehicle_types else "OTHER"
             plate_str = ",".join(plates) if plates else None
