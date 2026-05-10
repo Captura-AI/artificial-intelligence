@@ -10,7 +10,6 @@ from .routers import analysis
 from .routers import plate as plate_router
 from .services.clip_embedder import is_model_ready as clip_ready
 from .services.plate_detector import is_model_ready as platdetect_ready
-from .services.plate_reader import is_model_ready as ocr_ready
 from .services.plate_text_reader import is_model_ready as platreader_ready
 from .services.vehicle_detector import is_model_ready as yolo_ready
 
@@ -25,7 +24,6 @@ async def lifespan(app: FastAPI):
     # Warm up models on startup so first request is not slow
     print("Warming up AI models...")
     yolo_ready(settings.yolo_model_path)
-    ocr_ready(settings.ocr_languages)
     clip_ready(settings.clip_model_name)
     platdetect_ready(settings.platdetect_model_path)
     platreader_ready(settings.platreader_model_path)
@@ -59,7 +57,6 @@ async def health() -> HealthResponse:
     return HealthResponse(
         models_loaded={
             "clip": clip_ready(settings.clip_model_name),
-            "easyocr": ocr_ready(settings.ocr_languages),
             "yolo": yolo_ready(settings.yolo_model_path),
             "platdetect": platdetect_ready(settings.platdetect_model_path),
             "platreader": platreader_ready(settings.platreader_model_path),
