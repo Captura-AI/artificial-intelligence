@@ -24,3 +24,20 @@ def save_plate_result(
         conn.commit()
     finally:
         conn.close()
+
+
+def delete_plate_results(database_url: str, moment_id: str) -> None:
+    """Delete previous plate-scan rows for one uploader/moment id."""
+    conn = get_connection(database_url)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                DELETE FROM plate_results
+                WHERE moment_id = %s
+                """,
+                (moment_id,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
