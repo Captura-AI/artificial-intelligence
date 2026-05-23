@@ -27,8 +27,8 @@ class Settings(BaseSettings):
     # Supported languages for the legacy OCR reader
     ocr_languages: list[str] = ["en", "id"]
 
-    # Local storage for saved plate images (set PLATE_SAVE_DIR in .env to override)
-    plate_save_dir: str = "saved_plates"
+    # Local storage for temporary annotated plate scan output
+    plate_save_dir: str = "temp_image"
     photo_save_dir: str = "saved_photos"
     annotated_photo_save_dir: str = "saved_results"
 
