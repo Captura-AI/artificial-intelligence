@@ -9,27 +9,27 @@ from fastapi import APIRouter, Depends, UploadFile, File
 from PIL import Image
 
 from ..config import Settings, get_settings
-from ..db.crud import save_plate_result
+from ..db.crud import delete_plate_results, save_plate_result
 from ..models.schemas import PlateScanResponse
 from ..services.alpr_pipeline import PlatePipelineResult, run_plate_alpr
 
 router = APIRouter(prefix="/plate", tags=["Plate"])
 
 
-def _save_image(image: Image.Image, save_dir: str, moment_id: str) -> str:
+def _save_image(image: Image.Image, save_dir: str, uploader_id: str) -> str:
     """Save an image to disk and return its absolute path."""
     out_dir = Path(save_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{moment_id}_{uuid.uuid4().hex}.jpg"
+    filename = f"{uploader_id}_{uuid.uuid4().hex}.jpg"
     file_path = str(out_dir.resolve() / filename)
     image.convert("RGB").save(file_path, format="JPEG")
     return file_path
 
 
-def _save_cv2_image(image_rgb: np.ndarray, save_dir: str, moment_id: str) -> str:
+def _save_cv2_image(image_rgb: np.ndarray, save_dir: str, uploader_id: str) -> str:
     out_dir = Path(save_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{moment_id}_{uuid.uuid4().hex}.jpg"
+    filename = f"{uploader_id}_{uuid.uuid4().hex}.jpg"
     file_path = str(out_dir.resolve() / filename)
     image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
     cv2.imwrite(file_path, image_bgr)
@@ -83,9 +83,19 @@ def _annotate_plate_results(image: Image.Image, plate_results: list[PlatePipelin
     return annotated
 
 
+def _delete_previous_temp_images(settings: Settings, uploader_id: str) -> None:
+    directory = Path(settings.plate_save_dir)
+    if not directory.exists():
+        return
+
+    for image_path in directory.glob(f"{uploader_id}_*"):
+        if image_path.is_file():
+            image_path.unlink(missing_ok=True)
+
+
 @router.post("/scan", response_model=PlateScanResponse, summary="Scan an uploaded image for a license plate")
 async def scan_plate(
-    moment_id: str,
+    uploader_id: str,
     file: UploadFile = File(..., description="Image file to scan"),
     settings: Settings = Depends(get_settings),
 ) -> PlateScanResponse:
@@ -105,9 +115,18 @@ async def scan_plate(
     try:
         image = Image.open(io.BytesIO(contents)).convert("RGB")
     except Exception as exc:
-        return PlateScanResponse(uploader_id=moment_id, error=f"Cannot open image: {exc}")
+        return PlateScanResponse(uploader_id=uploader_id, error=f"Cannot open image: {exc}")
 
-    saved_photo = _save_image(image, settings.photo_save_dir, moment_id)
+    try:
+        _delete_previous_temp_images(settings, uploader_id)
+        delete_plate_results(settings.database_url, uploader_id)
+    except Exception as exc:
+        return PlateScanResponse(
+            uploader_id=uploader_id,
+            error=f"Failed to clear previous temp images: {exc}",
+        )
+
+    saved_photo = _save_image(image, settings.photo_save_dir, uploader_id)
 
     # Step 1 — detect plate bounding box(es) in the full image
     confidence: Optional[float] = None
@@ -132,7 +151,7 @@ async def scan_plate(
             annotated_image_path = _save_cv2_image(
                 annotated_image,
                 settings.plate_save_dir,
-                f"{moment_id}_annotated",
+                f"{uploader_id}_annotated",
             )
 
         for result in results:
@@ -141,7 +160,7 @@ async def scan_plate(
 
             save_plate_result(
                 database_url=settings.database_url,
-                moment_id=moment_id,
+                moment_id=uploader_id,
                 file_path=annotated_image_path,
                 plate_text=result.text,
                 confidence=result.text_confidence,
@@ -160,7 +179,7 @@ async def scan_plate(
         error = str(exc)
 
     return PlateScanResponse(
-        uploader_id=moment_id,
+        uploader_id=uploader_id,
         confidence=confidence,
         plates=plates,
         saved_photo=saved_photo,
