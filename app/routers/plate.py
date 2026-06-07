@@ -10,7 +10,7 @@ from PIL import Image
 
 from ..config import Settings, get_settings
 from ..db.crud import delete_plate_results, save_plate_result
-from ..models.schemas import PlateScanResponse
+from ..models.schemas import PlateConfirmRequest, PlateConfirmResponse, PlateScanResponse
 from ..services.alpr_pipeline import PlatePipelineResult, run_plate_alpr
 
 router = APIRouter(prefix="/plate", tags=["Plate"])
@@ -182,10 +182,77 @@ async def scan_plate(
         uploader_id=uploader_id,
         confidence=confidence,
         plates=plates,
-        saved_photo=saved_photo,
-        saved_result_photo=saved_result_photo,
+        saved_photo=Path(saved_photo).name if saved_photo else None,
+        saved_result_photo=Path(saved_result_photo).name if saved_result_photo else None,
         error=error,
     )
 
 
+@router.post("/confirm", response_model=PlateConfirmResponse, summary="Save or discard an uploaded plate scan")
+async def confirm_plate(
+    body: PlateConfirmRequest,
+    settings: Settings = Depends(get_settings),
+) -> PlateConfirmResponse:
+    """
+    Confirm whether to keep or discard files from a previous /plate/scan call.
+
+    - action "save"    → files are kept as-is, no changes made.
+    - action "discard" → deletes the specific files by filename and removes
+                         plate_results DB records for the uploader_id.
+
+    The filenames must be taken directly from the saved_photo / saved_result_photo
+    fields returned by /plate/scan (just the basename, not the full path).
+    """
+    if body.action not in ("save", "discard"):
+        return PlateConfirmResponse(
+            uploader_id=body.uploader_id,
+            action=body.action,
+            success=False,
+            message="Invalid action. Must be 'save' or 'discard'.",
+        )
+
+    if body.action == "save":
+        return PlateConfirmResponse(
+            uploader_id=body.uploader_id,
+            action=body.action,
+            success=True,
+            message="Photo saved successfully.",
+        )
+
+    # action == "discard"
+    errors: list[str] = []
+
+    if body.saved_photo_filename:
+        photo_path = Path(settings.photo_save_dir).resolve() / body.saved_photo_filename
+        if photo_path.exists() and photo_path.is_file():
+            photo_path.unlink(missing_ok=True)
+        elif not photo_path.exists():
+            errors.append(f"Photo file not found: {body.saved_photo_filename}")
+
+    if body.saved_result_photo_filename:
+        result_path = Path(settings.plate_save_dir).resolve() / body.saved_result_photo_filename
+        if result_path.exists() and result_path.is_file():
+            result_path.unlink(missing_ok=True)
+        elif not result_path.exists():
+            errors.append(f"Result photo file not found: {body.saved_result_photo_filename}")
+
+    try:
+        delete_plate_results(settings.database_url, body.uploader_id)
+    except Exception as exc:
+        errors.append(f"Failed to delete DB records: {exc}")
+
+    if errors:
+        return PlateConfirmResponse(
+            uploader_id=body.uploader_id,
+            action=body.action,
+            success=False,
+            message="; ".join(errors),
+        )
+
+    return PlateConfirmResponse(
+        uploader_id=body.uploader_id,
+        action=body.action,
+        success=True,
+        message="Photo discarded successfully.",
+    )
 

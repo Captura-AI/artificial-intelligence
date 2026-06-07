@@ -48,3 +48,17 @@ class PlateScanResponse(BaseModel):
     saved_photo: Optional[str] = None
     saved_result_photo: Optional[str] = None
     error: Optional[str] = None
+
+
+class PlateConfirmRequest(BaseModel):
+    uploader_id: str
+    action: str
+    saved_photo_filename: Optional[str] = None
+    saved_result_photo_filename: Optional[str] = None
+
+
+class PlateConfirmResponse(BaseModel):
+    uploader_id: str
+    action: str
+    success: bool
+    message: str
