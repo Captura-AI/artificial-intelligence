@@ -9,9 +9,7 @@ venv/
 env/
 
 # Model weight files (large binaries — download at runtime)
-*.pt
 *.pth
-*.onnx
 *.bin
 *.safetensors
 
