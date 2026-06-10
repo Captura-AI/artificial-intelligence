@@ -5,7 +5,8 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from PIL import Image
 
 from ..config import Settings, get_settings
@@ -186,6 +187,17 @@ async def scan_plate(
         saved_result_photo=Path(saved_result_photo).name if saved_result_photo else None,
         error=error,
     )
+
+
+@router.get("/result/{filename}", summary="Serve a saved annotated plate image by filename")
+async def get_result_image(
+    filename: str,
+    settings: Settings = Depends(get_settings),
+) -> FileResponse:
+    file_path = Path(settings.plate_save_dir).resolve() / filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {filename}")
+    return FileResponse(str(file_path), media_type="image/jpeg")
 
 
 @router.post("/confirm", response_model=PlateConfirmResponse, summary="Save or discard an uploaded plate scan")
