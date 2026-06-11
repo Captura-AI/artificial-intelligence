@@ -9,6 +9,10 @@ def save_plate_result(
     file_path: Optional[str],
     plate_text: Optional[str],
     confidence: Optional[float],
+    motor_type: Optional[str] = None,
+    motor_type_confidence: Optional[float] = None,
+    color: Optional[str] = None,
+    color_confidence: Optional[float] = None,
 ) -> None:
     """Insert one plate-scan result row into plate_results."""
     conn = get_connection(database_url)
@@ -16,10 +20,22 @@ def save_plate_result(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO plate_results (moment_id, file_path, plate_text, confidence)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO plate_results (
+                    moment_id, file_path, plate_text, confidence,
+                    motor_type, motor_type_confidence, color, color_confidence
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (moment_id, file_path, plate_text, confidence),
+                (
+                    moment_id,
+                    file_path,
+                    plate_text,
+                    confidence,
+                    motor_type,
+                    motor_type_confidence,
+                    color,
+                    color_confidence,
+                ),
             )
         conn.commit()
     finally:

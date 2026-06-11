@@ -7,6 +7,9 @@ __pycache__/
 .venv/
 venv/
 env/
+example/
+saved_photos/
+saved_plates/
 
 # Model weight files (large binaries — download at runtime)
 *.pth

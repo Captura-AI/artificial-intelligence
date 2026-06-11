@@ -9,6 +9,8 @@ from .models.schemas import HealthResponse
 from .routers import analysis
 from .routers import plate as plate_router
 from .services.clip_embedder import is_model_ready as clip_ready
+from .services.color_classifier import is_model_ready as color_ready
+from .services.motor_type_detector import is_model_ready as motortype_ready
 from .services.plate_detector import is_model_ready as platdetect_ready
 from .services.plate_text_reader import is_model_ready as platreader_ready
 from .services.vehicle_detector import is_model_ready as yolo_ready
@@ -27,6 +29,8 @@ async def lifespan(app: FastAPI):
     clip_ready(settings.clip_model_name)
     platdetect_ready(settings.platdetect_model_path)
     platreader_ready(settings.platreader_model_path)
+    motortype_ready(settings.motortype_model_path)
+    color_ready(settings.color_model_path)
     print("Models ready.")
     yield
 
@@ -60,6 +64,8 @@ async def health() -> HealthResponse:
             "yolo": yolo_ready(settings.yolo_model_path),
             "platdetect": platdetect_ready(settings.platdetect_model_path),
             "platreader": platreader_ready(settings.platreader_model_path),
+            "motortype": motortype_ready(settings.motortype_model_path),
+            "color": color_ready(settings.color_model_path),
         },
         status="ok",
         version=settings.app_version,

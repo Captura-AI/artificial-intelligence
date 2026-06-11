@@ -15,13 +15,28 @@ def init_db(database_url: str) -> None:
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS plate_results (
-                    id          SERIAL PRIMARY KEY,
-                    moment_id   TEXT        NOT NULL,
-                    file_path   TEXT,
-                    plate_text  TEXT,
-                    confidence  DOUBLE PRECISION,
-                    created_at  TIMESTAMPTZ DEFAULT NOW()
+                    id                     SERIAL PRIMARY KEY,
+                    moment_id              TEXT        NOT NULL,
+                    file_path              TEXT,
+                    plate_text             TEXT,
+                    confidence             DOUBLE PRECISION,
+                    motor_type             TEXT,
+                    motor_type_confidence  DOUBLE PRECISION,
+                    color                  TEXT,
+                    color_confidence       DOUBLE PRECISION,
+                    created_at             TIMESTAMPTZ DEFAULT NOW()
                 )
+                """
+            )
+            # In-place migration for databases created before the
+            # motor type / color columns existed.
+            cur.execute(
+                """
+                ALTER TABLE plate_results
+                    ADD COLUMN IF NOT EXISTS motor_type            TEXT,
+                    ADD COLUMN IF NOT EXISTS motor_type_confidence DOUBLE PRECISION,
+                    ADD COLUMN IF NOT EXISTS color                 TEXT,
+                    ADD COLUMN IF NOT EXISTS color_confidence      DOUBLE PRECISION
                 """
             )
         conn.commit()

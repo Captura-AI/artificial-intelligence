@@ -11,8 +11,14 @@ from PIL import Image
 
 from ..config import Settings, get_settings
 from ..db.crud import delete_plate_results, save_plate_result
-from ..models.schemas import PlateConfirmRequest, PlateConfirmResponse, PlateScanResponse
+from ..models.schemas import (
+    MotorDetection,
+    PlateConfirmRequest,
+    PlateConfirmResponse,
+    PlateScanResponse,
+)
 from ..services.alpr_pipeline import PlatePipelineResult, run_plate_alpr
+from ..services.motor_attribute_pipeline import MotorAttributeResult, run_motor_attributes
 
 router = APIRouter(prefix="/plate", tags=["Plate"])
 
@@ -37,9 +43,42 @@ def _save_cv2_image(image_rgb: np.ndarray, save_dir: str, uploader_id: str) -> s
     return file_path
 
 
-def _annotate_plate_results(image: Image.Image, plate_results: list[PlatePipelineResult]) -> np.ndarray:
+def _annotate_results(
+    image: Image.Image,
+    plate_results: list[PlatePipelineResult],
+    motor_results: list[MotorAttributeResult],
+) -> np.ndarray:
     annotated = np.array(image.convert("RGB"), dtype=np.uint8).copy()
+    _draw_motor_results(annotated, motor_results)
+    _draw_plate_results(annotated, plate_results)
+    return annotated
 
+
+def _draw_motor_results(annotated: np.ndarray, motor_results: list[MotorAttributeResult]) -> None:
+    for motor_result in motor_results:
+        x1, y1, x2, y2 = motor_result.bbox
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 3)
+
+        label = motor_result.motor_type
+        if motor_result.color:
+            label = f"{label} / {motor_result.color}"
+
+        (text_width, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
+        label_top = max(0, y1 - 35)
+        label_right = x1 + max(200, text_width + 10)
+        cv2.rectangle(annotated, (x1, label_top), (label_right, y1), (255, 255, 255), -1)
+        cv2.putText(
+            annotated,
+            label,
+            (x1 + 5, max(20, y1 - 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (255, 0, 0),
+            2,
+        )
+
+
+def _draw_plate_results(annotated: np.ndarray, plate_results: list[PlatePipelineResult]) -> None:
     for plate_result in plate_results:
         x1, y1, x2, y2 = plate_result.bbox
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 3)
@@ -81,8 +120,6 @@ def _annotate_plate_results(image: Image.Image, plate_results: list[PlatePipelin
                 1,
             )
 
-    return annotated
-
 
 def _delete_previous_temp_images(settings: Settings, uploader_id: str) -> None:
     directory = Path(settings.plate_save_dir)
@@ -107,8 +144,12 @@ async def scan_plate(
     1. Receive uploaded image
     2. Detect plate region with platdetect.pt
     3. Widen the plate crop and read characters with platreader.pt
-    4. Save the plate crop image to local disk
-    5. Persist file_path + plate_text in the database
+    4. Detect motorcycle type with motortype.pt and classify its color with
+       color.pt (always runs, so a photo without a readable plate still gets
+       searchable attributes)
+    5. Save the annotated image to local disk
+    6. Persist plate text + motor type/color in the database (a row is saved
+       even when no plate is found, as long as a motorcycle is detected)
 
     The NestJS BE can then call GET /plate/search?text=<plate> to look it up.
     """
@@ -129,14 +170,15 @@ async def scan_plate(
 
     saved_photo = _save_image(image, settings.photo_save_dir, uploader_id)
 
-    # Step 1 — detect plate bounding box(es) in the full image
     confidence: Optional[float] = None
     plates: list[str] = []
     saved_result_photo: Optional[str] = None
-    error: Optional[str] = None
+    errors: list[str] = []
 
+    # Step 1 — detect plate bounding box(es) and read their text
+    plate_results: list[PlatePipelineResult] = []
     try:
-        results = run_plate_alpr(
+        plate_results = run_plate_alpr(
             image=image,
             detector_model_path=settings.platdetect_model_path,
             reader_model_path=settings.platreader_model_path,
@@ -144,48 +186,94 @@ async def scan_plate(
             reader_confidence_threshold=settings.plate_confidence_threshold,
             padding_px=settings.plate_padding_px,
         )
+    except Exception as exc:
+        errors.append(f"Plate pipeline failed: {exc}")
 
-        annotated_results = [result for result in results if result.text]
-        annotated_image_path: Optional[str] = None
-        if annotated_results:
-            annotated_image = _annotate_plate_results(image, annotated_results)
+    # Step 2 — detect motorcycle type + color as alternative attributes
+    motor_results: list[MotorAttributeResult] = []
+    try:
+        motor_results = run_motor_attributes(
+            image=image,
+            motortype_model_path=settings.motortype_model_path,
+            color_model_path=settings.color_model_path,
+            confidence_threshold=settings.motortype_confidence_threshold,
+        )
+    except Exception as exc:
+        errors.append(f"Motor attribute pipeline failed: {exc}")
+
+    readable_plates = [result for result in plate_results if result.text]
+    dominant_motor = motor_results[0] if motor_results else None
+
+    # Step 3 — annotate whatever was found (plates and/or motorcycles)
+    annotated_image_path: Optional[str] = None
+    if readable_plates or motor_results:
+        try:
+            annotated_image = _annotate_results(image, readable_plates, motor_results)
             annotated_image_path = _save_cv2_image(
                 annotated_image,
                 settings.plate_save_dir,
                 f"{uploader_id}_annotated",
             )
+            saved_result_photo = annotated_image_path
+        except Exception as exc:
+            errors.append(f"Failed to save annotated image: {exc}")
 
-        for result in results:
-            if not result.text:
-                continue
-
+    # Step 4 — persist results; a scan without plate text is still recorded
+    # when a motorcycle was detected, so the upload stays searchable.
+    try:
+        for result in readable_plates:
             save_plate_result(
                 database_url=settings.database_url,
                 moment_id=uploader_id,
                 file_path=annotated_image_path,
                 plate_text=result.text,
                 confidence=result.text_confidence,
+                motor_type=dominant_motor.motor_type if dominant_motor else None,
+                motor_type_confidence=dominant_motor.motor_type_confidence if dominant_motor else None,
+                color=dominant_motor.color if dominant_motor else None,
+                color_confidence=dominant_motor.color_confidence if dominant_motor else None,
             )
             plates.append(result.text)
 
-        if plates:
-            confidence = max(
-                (result.text_confidence or 0.0) for result in results if result.text
+        if not readable_plates and dominant_motor:
+            save_plate_result(
+                database_url=settings.database_url,
+                moment_id=uploader_id,
+                file_path=annotated_image_path,
+                plate_text=None,
+                confidence=None,
+                motor_type=dominant_motor.motor_type,
+                motor_type_confidence=dominant_motor.motor_type_confidence,
+                color=dominant_motor.color,
+                color_confidence=dominant_motor.color_confidence,
             )
-            saved_result_photo = annotated_image_path
-        else:
-            error = "No plate text detected."
-
     except Exception as exc:
-        error = str(exc)
+        errors.append(f"Failed to save results to database: {exc}")
+
+    if plates:
+        confidence = max((result.text_confidence or 0.0) for result in readable_plates)
+    elif motor_results:
+        errors.append("No plate text detected.")
+    else:
+        errors.append("No plate or motorcycle detected.")
 
     return PlateScanResponse(
         uploader_id=uploader_id,
         confidence=confidence,
         plates=plates,
+        motors=[
+            MotorDetection(
+                motor_type=result.motor_type,
+                motor_type_confidence=result.motor_type_confidence,
+                color=result.color,
+                color_confidence=result.color_confidence,
+                bbox=result.bbox,
+            )
+            for result in motor_results
+        ],
         saved_photo=Path(saved_photo).name if saved_photo else None,
         saved_result_photo=Path(saved_result_photo).name if saved_result_photo else None,
-        error=error,
+        error="; ".join(errors) if errors else None,
     )
 
 
