@@ -219,34 +219,49 @@ async def scan_plate(
     except Exception as exc:
         errors.append(f"Plate pipeline failed: {exc}")
 
-    # Step 2 — detect motorcycle type + color as alternative attributes
-    motor_results: list[MotorAttributeResult] = []
+    # Step 2 — detect motorcycle type + color. Detect down to the lower assist
+    # threshold so a bike that scores below the standalone bar can still be
+    # recovered when a plate corroborates it (see filtering below).
+    motor_candidates: list[MotorAttributeResult] = []
     try:
-        motor_results = run_motor_attributes(
+        motor_candidates = run_motor_attributes(
             image=image,
             motortype_model_path=settings.motortype_model_path,
             color_model_path=settings.color_model_path,
-            confidence_threshold=settings.motortype_confidence_threshold,
+            confidence_threshold=settings.motortype_assist_confidence_threshold,
         )
     except Exception as exc:
         errors.append(f"Motor attribute pipeline failed: {exc}")
 
     readable_plates = [result for result in plate_results if result.text]
 
-    # Pair each plate with the motorcycle it sits on, so one motorcycle ends up
-    # with a complete record (plate + type + color). A motorcycle keeps the
-    # highest-confidence plate matched to it; plates that match no motorcycle are
-    # tracked separately and saved on their own (e.g. car plates).
-    plate_for_motor: dict[int, PlatePipelineResult] = {}
+    # Pair each plate with the motorcycle candidate it sits on, so one record
+    # ends up with the full set of attributes (plate + type + color). A bike
+    # keeps the highest-confidence plate matched to it; plates that match no
+    # candidate are tracked separately and saved on their own (e.g. car plates).
+    plate_for_candidate: dict[int, PlatePipelineResult] = {}
     matched_plate_ids: set[int] = set()
     for plate_index, plate in enumerate(readable_plates):
-        motor_index = _match_plate_to_motor(plate.bbox, motor_results)
-        if motor_index is None:
+        candidate_index = _match_plate_to_motor(plate.bbox, motor_candidates)
+        if candidate_index is None:
             continue
         matched_plate_ids.add(plate_index)
-        current = plate_for_motor.get(motor_index)
+        current = plate_for_candidate.get(candidate_index)
         if current is None or (plate.text_confidence or 0.0) > (current.text_confidence or 0.0):
-            plate_for_motor[motor_index] = plate
+            plate_for_candidate[candidate_index] = plate
+
+    # Keep a candidate as a real motorcycle when it clears the standalone
+    # threshold on its own, or when a plate inside it confirms a vehicle.
+    motor_results: list[MotorAttributeResult] = []
+    plate_for_motor: dict[int, PlatePipelineResult] = {}
+    for candidate_index, candidate in enumerate(motor_candidates):
+        clears_threshold = candidate.motor_type_confidence >= settings.motortype_confidence_threshold
+        matched_plate = plate_for_candidate.get(candidate_index)
+        if not clears_threshold and matched_plate is None:
+            continue
+        if matched_plate is not None:
+            plate_for_motor[len(motor_results)] = matched_plate
+        motor_results.append(candidate)
 
     unmatched_plates = [
         plate for plate_index, plate in enumerate(readable_plates) if plate_index not in matched_plate_ids

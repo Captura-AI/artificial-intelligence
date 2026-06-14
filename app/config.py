@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     motortype_model_path: str = "app/aimodels/motortype.pt"
     color_model_path: str = "app/aimodels/color.pt"
     motortype_confidence_threshold: float = 0.4
+    # Lower bar used only when a detected plate sits inside the motorcycle box.
+    # A plate corroborates that a vehicle is present, so a bike that scores below
+    # the standalone threshold can still be recovered into a complete record.
+    motortype_assist_confidence_threshold: float = 0.2
 
     # YOLO class IDs that correspond to vehicles
     # COCO dataset: 1=bicycle, 2=car, 3=motorcycle, 5=bus, 7=truck
