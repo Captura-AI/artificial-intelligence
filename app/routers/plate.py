@@ -15,6 +15,7 @@ from ..models.schemas import (
     MotorDetection,
     PlateConfirmRequest,
     PlateConfirmResponse,
+    PlateExtractResponse,
     PlateScanResponse,
 )
 from ..services.alpr_pipeline import PlatePipelineResult, run_plate_alpr
@@ -340,6 +341,89 @@ async def scan_plate(
         ],
         saved_photo=Path(saved_photo).name if saved_photo else None,
         saved_result_photo=Path(saved_result_photo).name if saved_result_photo else None,
+        error="; ".join(errors) if errors else None,
+    )
+
+
+@router.post(
+    "/extract",
+    response_model=PlateExtractResponse,
+    summary="Read plate text + motor type/color from an image without persisting",
+)
+async def extract_plate(
+    file: UploadFile = File(..., description="Image file to read"),
+    settings: Settings = Depends(get_settings),
+) -> PlateExtractResponse:
+    """
+    Stateless counterpart to /plate/scan used by the 'find my vehicle' search.
+
+    Runs plate ALPR and motor type/color detection on the uploaded image and
+    returns the readings only — no database writes, no saved files. Plates are
+    ordered by reading confidence so the caller can use the first as the search
+    query. Motor type/color of the dominant motorcycle is returned so the search
+    can rank candidates even when the plate is imperfect.
+    """
+    contents = await file.read()
+    try:
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+    except Exception as exc:
+        return PlateExtractResponse(error=f"Cannot open image: {exc}")
+
+    errors: list[str] = []
+
+    plate_results: list[PlatePipelineResult] = []
+    try:
+        plate_results = run_plate_alpr(
+            image=image,
+            detector_model_path=settings.platdetect_model_path,
+            reader_model_path=settings.platreader_model_path,
+            detector_confidence_threshold=settings.platdetect_confidence_threshold,
+            reader_confidence_threshold=settings.plate_confidence_threshold,
+            padding_px=settings.plate_padding_px,
+        )
+    except Exception as exc:
+        errors.append(f"Plate pipeline failed: {exc}")
+
+    motor_candidates: list[MotorAttributeResult] = []
+    try:
+        motor_candidates = run_motor_attributes(
+            image=image,
+            motortype_model_path=settings.motortype_model_path,
+            color_model_path=settings.color_model_path,
+            confidence_threshold=settings.motortype_assist_confidence_threshold,
+        )
+    except Exception as exc:
+        errors.append(f"Motor attribute pipeline failed: {exc}")
+
+    readable = sorted(
+        (result for result in plate_results if result.text),
+        key=lambda result: result.text_confidence or 0.0,
+        reverse=True,
+    )
+
+    # Keep motors that clear the standalone threshold; if none do but a plate was
+    # read, keep the single best candidate (the plate corroborates a vehicle).
+    motors = [
+        candidate
+        for candidate in motor_candidates
+        if candidate.motor_type_confidence >= settings.motortype_confidence_threshold
+    ]
+    if not motors and readable and motor_candidates:
+        motors = [motor_candidates[0]]
+
+    return PlateExtractResponse(
+        plates=[result.text for result in readable if result.text],
+        confidence=readable[0].text_confidence if readable else None,
+        motors=[
+            MotorDetection(
+                motor_type=motor.motor_type,
+                motor_type_confidence=motor.motor_type_confidence,
+                color=motor.color,
+                color_confidence=motor.color_confidence,
+                bbox=motor.bbox,
+            )
+            for motor in motors
+        ],
         error="; ".join(errors) if errors else None,
     )
 

@@ -61,6 +61,15 @@ class PlateScanResponse(BaseModel):
     error: Optional[str] = None
 
 
+class PlateExtractResponse(BaseModel):
+    """Stateless read of an image: plate text + motor type/color, no persistence."""
+
+    plates: list[str] = []
+    confidence: Optional[float] = None
+    motors: list[MotorDetection] = []
+    error: Optional[str] = None
+
+
 class PlateConfirmRequest(BaseModel):
     uploader_id: str
     action: str
