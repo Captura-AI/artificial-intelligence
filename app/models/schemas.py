@@ -46,6 +46,8 @@ class MotorDetection(BaseModel):
     motor_type_confidence: float
     color: Optional[str] = None
     color_confidence: Optional[float] = None
+    plate: Optional[str] = None
+    plate_confidence: Optional[float] = None
     bbox: list[int]
 
 

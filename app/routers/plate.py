@@ -121,6 +121,33 @@ def _draw_plate_results(annotated: np.ndarray, plate_results: list[PlatePipeline
             )
 
 
+def _match_plate_to_motor(
+    plate_bbox: list[int],
+    motor_results: list[MotorAttributeResult],
+) -> Optional[int]:
+    """
+    Return the index of the motorcycle whose box contains the plate's center.
+
+    When several boxes overlap the plate, the tightest (smallest-area) one wins,
+    so a plate is paired with the closest-fitting motorcycle. Returns None when
+    the plate falls outside every detected motorcycle (e.g. a car plate).
+    """
+    px = (plate_bbox[0] + plate_bbox[2]) / 2
+    py = (plate_bbox[1] + plate_bbox[3]) / 2
+
+    best_index: Optional[int] = None
+    best_area: Optional[int] = None
+    for index, motor in enumerate(motor_results):
+        mx1, my1, mx2, my2 = motor.bbox
+        if mx1 <= px <= mx2 and my1 <= py <= my2:
+            area = (mx2 - mx1) * (my2 - my1)
+            if best_area is None or area < best_area:
+                best_index = index
+                best_area = area
+
+    return best_index
+
+
 def _delete_previous_temp_images(settings: Settings, uploader_id: str) -> None:
     directory = Path(settings.plate_save_dir)
     if not directory.exists():
@@ -142,14 +169,17 @@ async def scan_plate(
 
     Flow:
     1. Receive uploaded image
-    2. Detect plate region with platdetect.pt
-    3. Widen the plate crop and read characters with platreader.pt
-    4. Detect motorcycle type with motortype.pt and classify its color with
-       color.pt (always runs, so a photo without a readable plate still gets
-       searchable attributes)
+    2. Detect plate region with platdetect.pt, then widen the crop and read
+       characters with platreader.pt
+    3. Detect motorcycle type with motortype.pt and classify its color with
+       color.pt (both always run, independent of the plate stage)
+    4. Pair each plate with the motorcycle it sits on so one record holds the
+       full set of attributes (plate + type + color); a motorcycle without a
+       readable plate keeps its type/color, and a plate without a motorcycle is
+       still recorded on its own
     5. Save the annotated image to local disk
-    6. Persist plate text + motor type/color in the database (a row is saved
-       even when no plate is found, as long as a motorcycle is detected)
+    6. Persist one row per motorcycle (with its matched plate) plus one row per
+       unmatched plate, so the upload stays searchable by either attribute
 
     The NestJS BE can then call GET /plate/search?text=<plate> to look it up.
     """
@@ -202,7 +232,25 @@ async def scan_plate(
         errors.append(f"Motor attribute pipeline failed: {exc}")
 
     readable_plates = [result for result in plate_results if result.text]
-    dominant_motor = motor_results[0] if motor_results else None
+
+    # Pair each plate with the motorcycle it sits on, so one motorcycle ends up
+    # with a complete record (plate + type + color). A motorcycle keeps the
+    # highest-confidence plate matched to it; plates that match no motorcycle are
+    # tracked separately and saved on their own (e.g. car plates).
+    plate_for_motor: dict[int, PlatePipelineResult] = {}
+    matched_plate_ids: set[int] = set()
+    for plate_index, plate in enumerate(readable_plates):
+        motor_index = _match_plate_to_motor(plate.bbox, motor_results)
+        if motor_index is None:
+            continue
+        matched_plate_ids.add(plate_index)
+        current = plate_for_motor.get(motor_index)
+        if current is None or (plate.text_confidence or 0.0) > (current.text_confidence or 0.0):
+            plate_for_motor[motor_index] = plate
+
+    unmatched_plates = [
+        plate for plate_index, plate in enumerate(readable_plates) if plate_index not in matched_plate_ids
+    ]
 
     # Step 3 — annotate whatever was found (plates and/or motorcycles)
     annotated_image_path: Optional[str] = None
@@ -218,35 +266,35 @@ async def scan_plate(
         except Exception as exc:
             errors.append(f"Failed to save annotated image: {exc}")
 
-    # Step 4 — persist results; a scan without plate text is still recorded
-    # when a motorcycle was detected, so the upload stays searchable.
+    # Step 4 — persist one row per motorcycle (with its matched plate, if any),
+    # plus one row per plate that did not belong to any detected motorcycle.
     try:
-        for result in readable_plates:
+        for motor_index, motor in enumerate(motor_results):
+            matched_plate = plate_for_motor.get(motor_index)
             save_plate_result(
                 database_url=settings.database_url,
                 moment_id=uploader_id,
                 file_path=annotated_image_path,
-                plate_text=result.text,
-                confidence=result.text_confidence,
-                motor_type=dominant_motor.motor_type if dominant_motor else None,
-                motor_type_confidence=dominant_motor.motor_type_confidence if dominant_motor else None,
-                color=dominant_motor.color if dominant_motor else None,
-                color_confidence=dominant_motor.color_confidence if dominant_motor else None,
+                plate_text=matched_plate.text if matched_plate else None,
+                confidence=matched_plate.text_confidence if matched_plate else None,
+                motor_type=motor.motor_type,
+                motor_type_confidence=motor.motor_type_confidence,
+                color=motor.color,
+                color_confidence=motor.color_confidence,
             )
-            plates.append(result.text)
+            if matched_plate and matched_plate.text:
+                plates.append(matched_plate.text)
 
-        if not readable_plates and dominant_motor:
+        for plate in unmatched_plates:
             save_plate_result(
                 database_url=settings.database_url,
                 moment_id=uploader_id,
                 file_path=annotated_image_path,
-                plate_text=None,
-                confidence=None,
-                motor_type=dominant_motor.motor_type,
-                motor_type_confidence=dominant_motor.motor_type_confidence,
-                color=dominant_motor.color,
-                color_confidence=dominant_motor.color_confidence,
+                plate_text=plate.text,
+                confidence=plate.text_confidence,
             )
+            if plate.text:
+                plates.append(plate.text)
     except Exception as exc:
         errors.append(f"Failed to save results to database: {exc}")
 
@@ -263,13 +311,17 @@ async def scan_plate(
         plates=plates,
         motors=[
             MotorDetection(
-                motor_type=result.motor_type,
-                motor_type_confidence=result.motor_type_confidence,
-                color=result.color,
-                color_confidence=result.color_confidence,
-                bbox=result.bbox,
+                motor_type=motor.motor_type,
+                motor_type_confidence=motor.motor_type_confidence,
+                color=motor.color,
+                color_confidence=motor.color_confidence,
+                plate=plate_for_motor[motor_index].text if motor_index in plate_for_motor else None,
+                plate_confidence=(
+                    plate_for_motor[motor_index].text_confidence if motor_index in plate_for_motor else None
+                ),
+                bbox=motor.bbox,
             )
-            for result in motor_results
+            for motor_index, motor in enumerate(motor_results)
         ],
         saved_photo=Path(saved_photo).name if saved_photo else None,
         saved_result_photo=Path(saved_result_photo).name if saved_result_photo else None,
