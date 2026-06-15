@@ -41,12 +41,32 @@ class HealthResponse(BaseModel):
     models_loaded: dict[str, bool]
 
 
+class MotorDetection(BaseModel):
+    motor_type: str
+    motor_type_confidence: float
+    color: Optional[str] = None
+    color_confidence: Optional[float] = None
+    plate: Optional[str] = None
+    plate_confidence: Optional[float] = None
+    bbox: list[int]
+
+
 class PlateScanResponse(BaseModel):
     uploader_id: str
     confidence: Optional[float] = None
     plates: list[str] = []
+    motors: list[MotorDetection] = []
     saved_photo: Optional[str] = None
     saved_result_photo: Optional[str] = None
+    error: Optional[str] = None
+
+
+class PlateExtractResponse(BaseModel):
+    """Stateless read of an image: plate text + motor type/color, no persistence."""
+
+    plates: list[str] = []
+    confidence: Optional[float] = None
+    motors: list[MotorDetection] = []
     error: Optional[str] = None
 
 
