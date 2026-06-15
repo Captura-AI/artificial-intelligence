@@ -1,5 +1,6 @@
 from typing import Optional
-from pydantic import BaseModel, HttpUrl
+
+from pydantic import BaseModel, Field
 
 
 class AnalyzeRequest(BaseModel):
@@ -49,6 +50,17 @@ class MotorDetection(BaseModel):
     plate: Optional[str] = None
     plate_confidence: Optional[float] = None
     bbox: list[int]
+
+
+class TextEmbeddingRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Natural-language search query")
+
+
+class TextEmbeddingResponse(BaseModel):
+    embedding: list[float]
+    model: str
+    query: str
+    vector_dimension: int
 
 
 class PlateScanResponse(BaseModel):
