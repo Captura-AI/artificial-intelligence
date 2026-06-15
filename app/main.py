@@ -7,6 +7,7 @@ from .config import get_settings
 from .db.database import init_db
 from .models.schemas import HealthResponse
 from .routers import analysis
+from .routers import embedding
 from .routers import plate as plate_router
 from .services.clip_embedder import is_model_ready as clip_ready
 from .services.color_classifier import is_model_ready as color_ready
@@ -53,6 +54,7 @@ app.add_middleware(
 )
 
 app.include_router(analysis.router)
+app.include_router(embedding.router)
 app.include_router(plate_router.router)
 
 

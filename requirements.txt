@@ -30,6 +30,8 @@ psycopg2-binary==2.9.10
 # Utilities
 numpy==1.26.4
 opencv-python-headless==4.10.0.84
+httpx==0.28.1
+pytest==8.3.4
 # Simulation UI & Vector DB
 streamlit==1.31.0
 faiss-cpu==1.8.0
