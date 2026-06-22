@@ -11,11 +11,10 @@ class Settings(BaseSettings):
     yolo_model_path: str = "yolov8n.pt"
     clip_model_name: str = "ViT-B/32"
     vehicle_confidence_threshold: float = 0.5
-    plate_confidence_threshold: float = 0.4
 
     # Plate detection / reading models
-    platdetect_model_path: str = "app/models/platdetect.pt"
-    platreader_model_path: str = "app/models/platreader.pt"
+    platdetect_model_path: str = "app/aimodels/platdetect.pt"
+    platreader_model_path: str = "app/aimodels/platreader.pt"
     platdetect_confidence_threshold: float = 0.25
     plate_padding_px: int = 15
     plate_confidence_threshold: float = 0.3
