@@ -1,4 +1,6 @@
 from functools import lru_cache
+from typing import Optional
+
 from pydantic_settings import BaseSettings
 
 
@@ -7,11 +9,16 @@ class Settings(BaseSettings):
     app_version: str = "1.0.0"
     debug: bool = False
 
+    # API security. When `api_key` is set, protected endpoints require a matching
+    # `X-API-Key` header; when left None, auth is disabled (convenient for local
+    # dev). `cors_allow_origins` overrides the wildcard default in production.
+    api_key: Optional[str] = None
+    cors_allow_origins: list[str] = ["*"]
+
     # Model configuration
     yolo_model_path: str = "yolov8n.pt"
     clip_model_name: str = "ViT-B/32"
     vehicle_confidence_threshold: float = 0.5
-    plate_confidence_threshold: float = 0.4
 
     # Plate detection / reading models
     platdetect_model_path: str = "app/models/platdetect.pt"
@@ -41,8 +48,18 @@ class Settings(BaseSettings):
     photo_save_dir: str = "saved_photos"
     annotated_photo_save_dir: str = "saved_results"
 
+    # Max heavy pipeline runs (/analyze) allowed at once. A defense-in-depth cap
+    # on top of the backend queue so the single-process model service is never
+    # overloaded by parallel callers. Set to CPU/GPU headroom; 1 = fully serial.
+    max_concurrent_analyses: int = 2
+
     # PostgreSQL connection string — override via DATABASE_URL in .env
     database_url: str = "postgresql://postgres:postgres@localhost:5432/captura"
+
+    # Connection pool sizing. max_size should comfortably exceed the number of
+    # threads that touch the DB at once (concurrent analyses + plate scans).
+    db_pool_min_size: int = 1
+    db_pool_max_size: int = 10
 
     class Config:
         env_file = ".env"

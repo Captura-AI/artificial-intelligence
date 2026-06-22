@@ -15,8 +15,7 @@ def save_plate_result(
     color_confidence: Optional[float] = None,
 ) -> None:
     """Insert one plate-scan result row into plate_results."""
-    conn = get_connection(database_url)
-    try:
+    with get_connection(database_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -38,14 +37,11 @@ def save_plate_result(
                 ),
             )
         conn.commit()
-    finally:
-        conn.close()
 
 
 def delete_plate_results(database_url: str, moment_id: str) -> None:
     """Delete previous plate-scan rows for one uploader/moment id."""
-    conn = get_connection(database_url)
-    try:
+    with get_connection(database_url) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -55,5 +51,3 @@ def delete_plate_results(database_url: str, moment_id: str) -> None:
                 (moment_id,),
             )
         conn.commit()
-    finally:
-        conn.close()
