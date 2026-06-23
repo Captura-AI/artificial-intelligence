@@ -11,6 +11,7 @@ from ..models.schemas import AnalyzeRequest, AnalyzeResponse, ExifData
 from .clip_embedder import classify_scene_tags, get_image_embedding
 from .exif_extractor import extract_exif, load_image_from_url
 from .alpr_pipeline import PlatePipelineResult, run_plate_alpr
+from .motor_attribute_pipeline import MotorAttributeResult, run_motor_attributes
 from .vehicle_detector import detect_vehicle
 
 
@@ -42,6 +43,47 @@ def _bbox_contains_point(bbox: list[int], x: float, y: float) -> bool:
 
 def _plate_center(bbox: list[int]) -> tuple[float, float]:
     return ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
+
+
+def _bbox_iou(box_a: list[int], box_b: list[int]) -> float:
+    inter_x1 = max(box_a[0], box_b[0])
+    inter_y1 = max(box_a[1], box_b[1])
+    inter_x2 = min(box_a[2], box_b[2])
+    inter_y2 = min(box_a[3], box_b[3])
+
+    inter_w = max(0, inter_x2 - inter_x1)
+    inter_h = max(0, inter_y2 - inter_y1)
+    intersection = inter_w * inter_h
+    if intersection == 0:
+        return 0.0
+
+    area_a = max(0, box_a[2] - box_a[0]) * max(0, box_a[3] - box_a[1])
+    area_b = max(0, box_b[2] - box_b[0]) * max(0, box_b[3] - box_b[1])
+    union = area_a + area_b - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def _match_motor_to_vehicle(
+    vehicle_bbox: list[int],
+    motor_results: list[MotorAttributeResult],
+    used_motor_indexes: set[int],
+    min_iou: float = 0.3,
+) -> Optional[int]:
+    """Return the index of the motor-attribute detection that best overlaps the
+    vehicle box (highest IoU above ``min_iou``), so a MOTORCYCLE vehicle can be
+    enriched with its body style + color."""
+    best_index: Optional[int] = None
+    best_iou = min_iou
+
+    for index, motor_result in enumerate(motor_results):
+        if index in used_motor_indexes:
+            continue
+        iou = _bbox_iou(vehicle_bbox, motor_result.bbox)
+        if iou >= best_iou:
+            best_index = index
+            best_iou = iou
+
+    return best_index
 
 
 def _match_plate_to_vehicle(
@@ -135,7 +177,22 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
     except Exception as exc:
         response.error = (response.error or "") + f" Plate pipeline failed: {exc}."
 
+    # Motorcycle body style + color (independent of the plate stage). Detected
+    # down to the assist threshold so a low-confidence bike confirmed by a plate
+    # can still be enriched; standalone filtering happens via IoU matching below.
+    motor_results: list[MotorAttributeResult] = []
+    try:
+        motor_results = run_motor_attributes(
+            image=image,
+            motortype_model_path=settings.motortype_model_path,
+            color_model_path=settings.color_model_path,
+            confidence_threshold=settings.motortype_assist_confidence_threshold,
+        )
+    except Exception as exc:
+        response.error = (response.error or "") + f" Motor attribute pipeline failed: {exc}."
+
     used_plate_indexes: set[int] = set()
+    used_motor_indexes: set[int] = set()
 
     # Iterate over all detected vehicles — match each vehicle with a full-image plate detection
     from ..models.schemas import VehicleDetection
@@ -146,6 +203,20 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
             vehicle_confidence=v_conf,
             bbox=v_bbox,
         )
+
+        if v_type == "MOTORCYCLE":
+            matched_motor_index = _match_motor_to_vehicle(
+                vehicle_bbox=v_bbox,
+                motor_results=motor_results,
+                used_motor_indexes=used_motor_indexes,
+            )
+            if matched_motor_index is not None:
+                used_motor_indexes.add(matched_motor_index)
+                matched_motor = motor_results[matched_motor_index]
+                vehicle_data.motor_type = matched_motor.motor_type
+                vehicle_data.motor_type_confidence = matched_motor.motor_type_confidence
+                vehicle_data.color = matched_motor.color
+                vehicle_data.color_confidence = matched_motor.color_confidence
 
         try:
             matched_plate_index = _match_plate_to_vehicle(
@@ -182,6 +253,18 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
             ) + f" Plate pipeline failed for vehicle {v_type}: {exc}."
 
         response.vehicles.append(vehicle_data)
+
+    # Flatten the highest-confidence vehicle into top-level fields. detected_vehicles
+    # is sorted by confidence descending, so the first appended vehicle is dominant.
+    # The backend reads these scalars directly to auto-fill moment columns.
+    if response.vehicles:
+        dominant = response.vehicles[0]
+        response.vehicle_type = dominant.vehicle_type
+        response.vehicle_confidence = dominant.vehicle_confidence
+        response.license_plate = dominant.license_plate
+        response.plate_confidence = dominant.plate_confidence
+        response.motor_type = dominant.motor_type
+        response.color = dominant.color
 
     # CLIP embedding
     try:

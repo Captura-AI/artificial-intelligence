@@ -23,11 +23,24 @@ class VehicleDetection(BaseModel):
     license_plate: Optional[str] = None
     plate_confidence: Optional[float] = None
     plate_image_path: Optional[str] = None
+    motor_type: Optional[str] = None
+    motor_type_confidence: Optional[float] = None
+    color: Optional[str] = None
+    color_confidence: Optional[float] = None
 
 
 class AnalyzeResponse(BaseModel):
     moment_id: str
     vehicles: list[VehicleDetection] = []
+    # Flat convenience fields mirroring the highest-confidence (dominant) vehicle.
+    # The NestJS backend reads these directly to auto-fill scalar moment columns;
+    # the full `vehicles` array is preserved for multi-vehicle use and JSONB storage.
+    vehicle_type: Optional[str] = None
+    vehicle_confidence: Optional[float] = None
+    license_plate: Optional[str] = None
+    plate_confidence: Optional[float] = None
+    motor_type: Optional[str] = None
+    color: Optional[str] = None
     saved_photo: Optional[str] = None
     embedding: Optional[list[float]] = None
     detected_tags: list[str] = []

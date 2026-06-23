@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
@@ -9,6 +9,7 @@ from .models.schemas import HealthResponse
 from .routers import analysis
 from .routers import embedding
 from .routers import plate as plate_router
+from .security import require_api_key
 from .services.clip_embedder import is_model_ready as clip_ready
 from .services.color_classifier import is_model_ready as color_ready
 from .services.motor_type_detector import is_model_ready as motortype_ready
@@ -21,8 +22,8 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialise SQLite database
-    init_db(settings.database_url)
+    # Initialise PostgreSQL connection pool + schema
+    init_db(settings.database_url, settings.db_pool_min_size, settings.db_pool_max_size)
 
     # Warm up models on startup so first request is not slow
     print("Warming up AI models...")
@@ -50,12 +51,15 @@ app.add_middleware(
     CORSMiddleware,
     allow_headers=["*"],
     allow_methods=["*"],
-    allow_origins=["*"],
+    allow_origins=settings.cors_allow_origins,
 )
 
-app.include_router(analysis.router)
-app.include_router(embedding.router)
-app.include_router(plate_router.router)
+# Protect the heavy/data endpoints with the API key (no-op when unset). /health
+# stays open for liveness probes.
+_protected = [Depends(require_api_key)]
+app.include_router(analysis.router, dependencies=_protected)
+app.include_router(embedding.router, dependencies=_protected)
+app.include_router(plate_router.router, dependencies=_protected)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
