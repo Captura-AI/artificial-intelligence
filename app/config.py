@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     vehicle_confidence_threshold: float = 0.5
 
     # Plate detection / reading models
-    platdetect_model_path: str = "app/models/platdetect.pt"
-    platreader_model_path: str = "app/models/platreader.pt"
+    platdetect_model_path: str = "app/aimodels/platdetect.pt"
+    platreader_model_path: str = "app/aimodels/platreader.pt"
     platdetect_confidence_threshold: float = 0.25
     plate_padding_px: int = 15
     plate_confidence_threshold: float = 0.3

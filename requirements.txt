@@ -28,6 +28,9 @@ torchvision==0.20.1
 psycopg2-binary==2.9.10
 
 # Utilities
+# ponytail: openai-clip uses pkg_resources (old API). setuptools>=75 removed it as top-level module.
+# Pin below 75 so pkg_resources stays importable without patching clip.
+setuptools<75.0.0
 numpy==1.26.4
 opencv-python-headless==4.10.0.84
 httpx==0.28.1
