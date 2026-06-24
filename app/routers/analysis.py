@@ -1,3 +1,6 @@
+import logging
+import time
+
 import anyio
 from fastapi import APIRouter, Depends
 
@@ -6,6 +9,7 @@ from ..models.schemas import AnalyzeRequest, AnalyzeResponse
 from ..services.analyzer import analyze_image
 
 router = APIRouter(prefix="/analyze", tags=["Analysis"])
+logger = logging.getLogger(__name__)
 
 # Defense-in-depth cap on concurrent heavy pipeline runs. The backend BullMQ
 # queue is the primary throttle, but this protects the single-process model
@@ -33,5 +37,31 @@ async def analyze(
     semaphore: callers above the limit wait their turn instead of piling onto
     the models, and the event loop stays free to serve /health.
     """
+    queue_start = time.monotonic()
+
     async with _analysis_semaphore:
-        return await anyio.to_thread.run_sync(analyze_image, request, settings)
+        queue_wait_ms = int((time.monotonic() - queue_start) * 1000)
+
+        if queue_wait_ms > 100:
+            logger.info(
+                "analyze.queued moment_id=%s wait_ms=%d",
+                request.moment_id,
+                queue_wait_ms,
+            )
+
+        result = await anyio.to_thread.run_sync(analyze_image, request, settings)
+
+        logger.info(
+            "analyze.response moment_id=%s plate=%s vehicle=%s vehicles=%d "
+            "embedding=%s tags=%d total_ms=%d error=%s",
+            result.moment_id,
+            result.license_plate,
+            result.vehicle_type,
+            len(result.vehicles),
+            "yes" if result.embedding else "no",
+            len(result.detected_tags),
+            result.processing_time_ms,
+            result.error,
+        )
+
+        return result

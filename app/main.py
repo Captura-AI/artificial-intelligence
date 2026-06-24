@@ -1,6 +1,8 @@
+import logging
+import logging.config
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
@@ -19,22 +21,55 @@ from .services.vehicle_detector import is_model_ready as yolo_ready
 
 settings = get_settings()
 
+# ── Logging configuration ──────────────────────────────────────────────────────
+# JSON-structured logs so lines can be parsed by log aggregators (Loki, CloudWatch,
+# Datadog, etc.). Falls back to plain text if python-json-logger is not installed.
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
+
+try:
+    from pythonjsonlogger.json import JsonFormatter  # type: ignore[import-untyped]
+
+    _formatter: logging.Formatter = JsonFormatter(
+        fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+        rename_fields={"asctime": "timestamp", "levelname": "level", "name": "logger"},
+    )
+except ImportError:
+    _formatter = logging.Formatter(_LOG_FORMAT)
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_formatter)
+
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[_handler],
+    force=True,
+)
+
+# Silence noisy third-party loggers
+logging.getLogger("ultralytics").setLevel(logging.WARNING)
+logging.getLogger("easyocr").setLevel(logging.WARNING)
+logging.getLogger("PIL").setLevel(logging.WARNING)
+logging.getLogger("torch").setLevel(logging.WARNING)
+logging.getLogger("clip").setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialise PostgreSQL connection pool + schema
+    logger.info("startup: initialising database connection")
     init_db(settings.database_url, settings.db_pool_min_size, settings.db_pool_max_size)
 
-    # Warm up models on startup so first request is not slow
-    print("Warming up AI models...")
+    logger.info("startup: warming up AI models")
     yolo_ready(settings.yolo_model_path)
     clip_ready(settings.clip_model_name)
     platdetect_ready(settings.platdetect_model_path)
     platreader_ready(settings.platreader_model_path)
     motortype_ready(settings.motortype_model_path)
     color_ready(settings.color_model_path)
-    print("Models ready.")
+    logger.info("startup: all models ready")
     yield
+    logger.info("shutdown: application stopping")
 
 
 app = FastAPI(
