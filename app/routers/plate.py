@@ -1,4 +1,6 @@
 import io
+import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -22,6 +24,7 @@ from ..services.alpr_pipeline import PlatePipelineResult, run_plate_alpr
 from ..services.motor_attribute_pipeline import MotorAttributeResult, run_motor_attributes
 
 router = APIRouter(prefix="/plate", tags=["Plate"])
+logger = logging.getLogger(__name__)
 
 
 def _save_image(image: Image.Image, save_dir: str, uploader_id: str) -> str:
@@ -184,6 +187,9 @@ async def scan_plate(
 
     The NestJS BE can then call GET /plate/search?text=<plate> to look it up.
     """
+    start_ms = time.monotonic()
+    logger.info("plate.scan.start uploader_id=%s filename=%s", uploader_id, file.filename)
+
     contents = await file.read()
     try:
         image = Image.open(io.BytesIO(contents)).convert("RGB")
@@ -321,6 +327,16 @@ async def scan_plate(
     else:
         errors.append("No plate or motorcycle detected.")
 
+    elapsed_ms = int((time.monotonic() - start_ms) * 1000)
+    logger.info(
+        "plate.scan.complete uploader_id=%s plates=%s motors=%d elapsed_ms=%d error=%s",
+        uploader_id,
+        plates,
+        len(motor_results),
+        elapsed_ms,
+        "; ".join(errors) if errors else None,
+    )
+
     return PlateScanResponse(
         uploader_id=uploader_id,
         confidence=confidence,
@@ -363,6 +379,8 @@ async def extract_plate(
     query. Motor type/color of the dominant motorcycle is returned so the search
     can rank candidates even when the plate is imperfect.
     """
+    start_ms = time.monotonic()
+    logger.info("plate.extract.start filename=%s", file.filename)
     contents = await file.read()
     try:
         image = Image.open(io.BytesIO(contents)).convert("RGB")
@@ -411,8 +429,17 @@ async def extract_plate(
     if not motors and readable and motor_candidates:
         motors = [motor_candidates[0]]
 
+    plate_texts = [result.text for result in readable if result.text]
+    logger.info(
+        "plate.extract.complete plates=%s motors=%d elapsed_ms=%d error=%s",
+        plate_texts,
+        len(motors),
+        int((time.monotonic() - start_ms) * 1000),
+        "; ".join(errors) if errors else None,
+    )
+
     return PlateExtractResponse(
-        plates=[result.text for result in readable if result.text],
+        plates=plate_texts,
         confidence=readable[0].text_confidence if readable else None,
         motors=[
             MotorDetection(
@@ -440,7 +467,7 @@ async def get_result_image(
 
 
 @router.post("/confirm", response_model=PlateConfirmResponse, summary="Save or discard an uploaded plate scan")
-async def confirm_plate(
+async def confirm_plate(  # noqa: C901
     body: PlateConfirmRequest,
     settings: Settings = Depends(get_settings),
 ) -> PlateConfirmResponse:
@@ -454,6 +481,8 @@ async def confirm_plate(
     The filenames must be taken directly from the saved_photo / saved_result_photo
     fields returned by /plate/scan (just the basename, not the full path).
     """
+    logger.info("plate.confirm.start uploader_id=%s action=%s", body.uploader_id, body.action)
+
     if body.action not in ("save", "discard"):
         return PlateConfirmResponse(
             uploader_id=body.uploader_id,
@@ -463,6 +492,7 @@ async def confirm_plate(
         )
 
     if body.action == "save":
+        logger.info("plate.confirm.saved uploader_id=%s", body.uploader_id)
         return PlateConfirmResponse(
             uploader_id=body.uploader_id,
             action=body.action,
@@ -493,6 +523,11 @@ async def confirm_plate(
         errors.append(f"Failed to delete DB records: {exc}")
 
     if errors:
+        logger.warning(
+            "plate.confirm.discard_partial uploader_id=%s errors=%s",
+            body.uploader_id,
+            errors,
+        )
         return PlateConfirmResponse(
             uploader_id=body.uploader_id,
             action=body.action,
@@ -500,6 +535,7 @@ async def confirm_plate(
             message="; ".join(errors),
         )
 
+    logger.info("plate.confirm.discarded uploader_id=%s", body.uploader_id)
     return PlateConfirmResponse(
         uploader_id=body.uploader_id,
         action=body.action,
