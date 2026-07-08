@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     yolo_model_path: str = "yolov8n.pt"
     clip_model_name: str = "ViT-B/32"
     vehicle_confidence_threshold: float = 0.5
+    # Cosine-similarity cutoff for CLIP zero-shot scene tagging.
+    clip_tag_threshold: float = 0.2
 
     # Plate detection / reading models
     platdetect_model_path: str = "app/aimodels/platdetect.pt"

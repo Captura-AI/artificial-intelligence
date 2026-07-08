@@ -21,20 +21,15 @@ from ..models.schemas import (
     PlateScanResponse,
 )
 from ..services.alpr_pipeline import PlatePipelineResult, run_plate_alpr
-from ..services.motor_attribute_pipeline import MotorAttributeResult, run_motor_attributes
+from ..services.motor_attribute_pipeline import (
+    MotorAttributeResult,
+    run_motor_attributes,
+)
+from ..services.geometry import _bbox_contains_point, _plate_center
+from ..services.utils import save_jpeg
 
 router = APIRouter(prefix="/plate", tags=["Plate"])
 logger = logging.getLogger(__name__)
-
-
-def _save_image(image: Image.Image, save_dir: str, uploader_id: str) -> str:
-    """Save an image to disk and return its absolute path."""
-    out_dir = Path(save_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{uploader_id}_{uuid.uuid4().hex}.jpg"
-    file_path = str(out_dir.resolve() / filename)
-    image.convert("RGB").save(file_path, format="JPEG")
-    return file_path
 
 
 def _save_cv2_image(image_rgb: np.ndarray, save_dir: str, uploader_id: str) -> str:
@@ -58,7 +53,9 @@ def _annotate_results(
     return annotated
 
 
-def _draw_motor_results(annotated: np.ndarray, motor_results: list[MotorAttributeResult]) -> None:
+def _draw_motor_results(
+    annotated: np.ndarray, motor_results: list[MotorAttributeResult]
+) -> None:
     for motor_result in motor_results:
         x1, y1, x2, y2 = motor_result.bbox
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (255, 0, 0), 3)
@@ -70,7 +67,9 @@ def _draw_motor_results(annotated: np.ndarray, motor_results: list[MotorAttribut
         (text_width, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
         label_top = max(0, y1 - 35)
         label_right = x1 + max(200, text_width + 10)
-        cv2.rectangle(annotated, (x1, label_top), (label_right, y1), (255, 255, 255), -1)
+        cv2.rectangle(
+            annotated, (x1, label_top), (label_right, y1), (255, 255, 255), -1
+        )
         cv2.putText(
             annotated,
             label,
@@ -82,7 +81,9 @@ def _draw_motor_results(annotated: np.ndarray, motor_results: list[MotorAttribut
         )
 
 
-def _draw_plate_results(annotated: np.ndarray, plate_results: list[PlatePipelineResult]) -> None:
+def _draw_plate_results(
+    annotated: np.ndarray, plate_results: list[PlatePipelineResult]
+) -> None:
     for plate_result in plate_results:
         x1, y1, x2, y2 = plate_result.bbox
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 3)
@@ -96,7 +97,9 @@ def _draw_plate_results(annotated: np.ndarray, plate_results: list[PlatePipeline
             )
             label_top = max(0, y1 - 35)
             label_right = x1 + max(200, text_width + 10)
-            cv2.rectangle(annotated, (x1, label_top), (label_right, y1), (255, 255, 255), -1)
+            cv2.rectangle(
+                annotated, (x1, label_top), (label_right, y1), (255, 255, 255), -1
+            )
             cv2.putText(
                 annotated,
                 plate_result.text,
@@ -136,14 +139,13 @@ def _match_plate_to_motor(
     so a plate is paired with the closest-fitting motorcycle. Returns None when
     the plate falls outside every detected motorcycle (e.g. a car plate).
     """
-    px = (plate_bbox[0] + plate_bbox[2]) / 2
-    py = (plate_bbox[1] + plate_bbox[3]) / 2
+    px, py = _plate_center(plate_bbox)
 
     best_index: Optional[int] = None
     best_area: Optional[int] = None
     for index, motor in enumerate(motor_results):
-        mx1, my1, mx2, my2 = motor.bbox
-        if mx1 <= px <= mx2 and my1 <= py <= my2:
+        if _bbox_contains_point(motor.bbox, px, py):
+            mx1, my1, mx2, my2 = motor.bbox
             area = (mx2 - mx1) * (my2 - my1)
             if best_area is None or area < best_area:
                 best_index = index
@@ -162,7 +164,11 @@ def _delete_previous_temp_images(settings: Settings, uploader_id: str) -> None:
             image_path.unlink(missing_ok=True)
 
 
-@router.post("/scan", response_model=PlateScanResponse, summary="Scan an uploaded image for a license plate")
+@router.post(
+    "/scan",
+    response_model=PlateScanResponse,
+    summary="Scan an uploaded image for a license plate",
+)
 async def scan_plate(
     uploader_id: str,
     file: UploadFile = File(..., description="Image file to scan"),
@@ -188,13 +194,17 @@ async def scan_plate(
     The NestJS BE can then call GET /plate/search?text=<plate> to look it up.
     """
     start_ms = time.monotonic()
-    logger.info("plate.scan.start uploader_id=%s filename=%s", uploader_id, file.filename)
+    logger.info(
+        "plate.scan.start uploader_id=%s filename=%s", uploader_id, file.filename
+    )
 
     contents = await file.read()
     try:
         image = Image.open(io.BytesIO(contents)).convert("RGB")
     except Exception as exc:
-        return PlateScanResponse(uploader_id=uploader_id, error=f"Cannot open image: {exc}")
+        return PlateScanResponse(
+            uploader_id=uploader_id, error=f"Cannot open image: {exc}"
+        )
 
     try:
         _delete_previous_temp_images(settings, uploader_id)
@@ -205,7 +215,7 @@ async def scan_plate(
             error=f"Failed to clear previous temp images: {exc}",
         )
 
-    saved_photo = _save_image(image, settings.photo_save_dir, uploader_id)
+    saved_photo = save_jpeg(image, settings.photo_save_dir, uploader_id)
 
     confidence: Optional[float] = None
     plates: list[str] = []
@@ -254,7 +264,9 @@ async def scan_plate(
             continue
         matched_plate_ids.add(plate_index)
         current = plate_for_candidate.get(candidate_index)
-        if current is None or (plate.text_confidence or 0.0) > (current.text_confidence or 0.0):
+        if current is None or (plate.text_confidence or 0.0) > (
+            current.text_confidence or 0.0
+        ):
             plate_for_candidate[candidate_index] = plate
 
     # Keep a candidate as a real motorcycle when it clears the standalone
@@ -262,7 +274,9 @@ async def scan_plate(
     motor_results: list[MotorAttributeResult] = []
     plate_for_motor: dict[int, PlatePipelineResult] = {}
     for candidate_index, candidate in enumerate(motor_candidates):
-        clears_threshold = candidate.motor_type_confidence >= settings.motortype_confidence_threshold
+        clears_threshold = (
+            candidate.motor_type_confidence >= settings.motortype_confidence_threshold
+        )
         matched_plate = plate_for_candidate.get(candidate_index)
         if not clears_threshold and matched_plate is None:
             continue
@@ -271,7 +285,9 @@ async def scan_plate(
         motor_results.append(candidate)
 
     unmatched_plates = [
-        plate for plate_index, plate in enumerate(readable_plates) if plate_index not in matched_plate_ids
+        plate
+        for plate_index, plate in enumerate(readable_plates)
+        if plate_index not in matched_plate_ids
     ]
 
     # Step 3 — annotate whatever was found (plates and/or motorcycles)
@@ -347,16 +363,24 @@ async def scan_plate(
                 motor_type_confidence=motor.motor_type_confidence,
                 color=motor.color,
                 color_confidence=motor.color_confidence,
-                plate=plate_for_motor[motor_index].text if motor_index in plate_for_motor else None,
+                plate=(
+                    plate_for_motor[motor_index].text
+                    if motor_index in plate_for_motor
+                    else None
+                ),
                 plate_confidence=(
-                    plate_for_motor[motor_index].text_confidence if motor_index in plate_for_motor else None
+                    plate_for_motor[motor_index].text_confidence
+                    if motor_index in plate_for_motor
+                    else None
                 ),
                 bbox=motor.bbox,
             )
             for motor_index, motor in enumerate(motor_results)
         ],
         saved_photo=Path(saved_photo).name if saved_photo else None,
-        saved_result_photo=Path(saved_result_photo).name if saved_result_photo else None,
+        saved_result_photo=(
+            Path(saved_result_photo).name if saved_result_photo else None
+        ),
         error="; ".join(errors) if errors else None,
     )
 
@@ -455,7 +479,9 @@ async def extract_plate(
     )
 
 
-@router.get("/result/{filename}", summary="Serve a saved annotated plate image by filename")
+@router.get(
+    "/result/{filename}", summary="Serve a saved annotated plate image by filename"
+)
 async def get_result_image(
     filename: str,
     settings: Settings = Depends(get_settings),
@@ -466,7 +492,11 @@ async def get_result_image(
     return FileResponse(str(file_path), media_type="image/jpeg")
 
 
-@router.post("/confirm", response_model=PlateConfirmResponse, summary="Save or discard an uploaded plate scan")
+@router.post(
+    "/confirm",
+    response_model=PlateConfirmResponse,
+    summary="Save or discard an uploaded plate scan",
+)
 async def confirm_plate(  # noqa: C901
     body: PlateConfirmRequest,
     settings: Settings = Depends(get_settings),
@@ -481,7 +511,9 @@ async def confirm_plate(  # noqa: C901
     The filenames must be taken directly from the saved_photo / saved_result_photo
     fields returned by /plate/scan (just the basename, not the full path).
     """
-    logger.info("plate.confirm.start uploader_id=%s action=%s", body.uploader_id, body.action)
+    logger.info(
+        "plate.confirm.start uploader_id=%s action=%s", body.uploader_id, body.action
+    )
 
     if body.action not in ("save", "discard"):
         return PlateConfirmResponse(
@@ -511,11 +543,15 @@ async def confirm_plate(  # noqa: C901
             errors.append(f"Photo file not found: {body.saved_photo_filename}")
 
     if body.saved_result_photo_filename:
-        result_path = Path(settings.plate_save_dir).resolve() / body.saved_result_photo_filename
+        result_path = (
+            Path(settings.plate_save_dir).resolve() / body.saved_result_photo_filename
+        )
         if result_path.exists() and result_path.is_file():
             result_path.unlink(missing_ok=True)
         elif not result_path.exists():
-            errors.append(f"Result photo file not found: {body.saved_result_photo_filename}")
+            errors.append(
+                f"Result photo file not found: {body.saved_result_photo_filename}"
+            )
 
     try:
         delete_plate_results(settings.database_url, body.uploader_id)
@@ -542,4 +578,3 @@ async def confirm_plate(  # noqa: C901
         success=True,
         message="Photo discarded successfully.",
     )
-
