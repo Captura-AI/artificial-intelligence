@@ -1,19 +1,13 @@
-from dataclasses import dataclass
 from typing import Optional
 
 from PIL import Image
 
+from ..models.internal import MotorAttributeResult
 from .color_classifier import classify_color
 from .motor_type_detector import detect_motor_types
 
-
-@dataclass
-class MotorAttributeResult:
-    motor_type: str
-    motor_type_confidence: float
-    color: Optional[str]
-    color_confidence: Optional[float]
-    bbox: list[int]
+# Re-exported so existing callers can keep importing the DTO from this module.
+__all__ = ["MotorAttributeResult", "run_motor_attributes"]
 
 
 def run_motor_attributes(

@@ -1,69 +1,19 @@
 import logging
 import time
-import uuid
-from pathlib import Path
 from typing import Optional
-
-from PIL import Image
 
 from ..config import Settings
 from ..db.crud import save_plate_result
 from ..models.schemas import AnalyzeRequest, AnalyzeResponse, ExifData
+from .alpr_pipeline import PlatePipelineResult, run_plate_alpr
 from .clip_embedder import classify_scene_tags, get_image_embedding
 from .exif_extractor import extract_exif, load_image_from_url
-from .alpr_pipeline import PlatePipelineResult, run_plate_alpr
+from .geometry import _bbox_contains_point, _bbox_iou, _plate_center
 from .motor_attribute_pipeline import MotorAttributeResult, run_motor_attributes
+from .utils import save_jpeg
 from .vehicle_detector import detect_vehicle
 
 logger = logging.getLogger(__name__)
-
-
-def _save_plate_image(plate_crop: Image.Image, save_dir: str, moment_id: str) -> str:
-    """
-    Save a cropped plate image to disk and return its absolute file path.
-    Directory is created on demand; file is named <moment_id>_<uuid>.jpg.
-    """
-    out_dir = Path(save_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{moment_id}_{uuid.uuid4().hex}.jpg"
-    file_path = str(out_dir / filename)
-    plate_crop.convert("RGB").save(file_path, format="JPEG")
-    return file_path
-
-
-def _save_original_image(image: Image.Image, save_dir: str, moment_id: str) -> str:
-    out_dir = Path(save_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"{moment_id}_{uuid.uuid4().hex}.jpg"
-    file_path = str(out_dir / filename)
-    image.convert("RGB").save(file_path, format="JPEG")
-    return file_path
-
-
-def _bbox_contains_point(bbox: list[int], x: float, y: float) -> bool:
-    return bbox[0] <= x <= bbox[2] and bbox[1] <= y <= bbox[3]
-
-
-def _plate_center(bbox: list[int]) -> tuple[float, float]:
-    return ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
-
-
-def _bbox_iou(box_a: list[int], box_b: list[int]) -> float:
-    inter_x1 = max(box_a[0], box_b[0])
-    inter_y1 = max(box_a[1], box_b[1])
-    inter_x2 = min(box_a[2], box_b[2])
-    inter_y2 = min(box_a[3], box_b[3])
-
-    inter_w = max(0, inter_x2 - inter_x1)
-    inter_h = max(0, inter_y2 - inter_y1)
-    intersection = inter_w * inter_h
-    if intersection == 0:
-        return 0.0
-
-    area_a = max(0, box_a[2] - box_a[0]) * max(0, box_a[3] - box_a[1])
-    area_b = max(0, box_b[2] - box_b[0]) * max(0, box_b[3] - box_b[1])
-    union = area_a + area_b - intersection
-    return intersection / union if union > 0 else 0.0
 
 
 def _match_motor_to_vehicle(
@@ -140,7 +90,9 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
     t0 = time.monotonic()
     try:
         image_bytes, image = load_image_from_url(request.image_url)
-        logger.debug("analyze_image.load_image done ms=%d", int((time.monotonic() - t0) * 1000))
+        logger.debug(
+            "analyze_image.load_image done ms=%d", int((time.monotonic() - t0) * 1000)
+        )
     except Exception as exc:
         logger.error("analyze_image.load_image failed moment_id=%s error=%s", mid, exc)
         response.error = f"Failed to load image: {exc}"
@@ -148,10 +100,14 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
         return response
 
     try:
-        response.saved_photo = _save_original_image(image, settings.photo_save_dir, mid)
+        response.saved_photo = save_jpeg(image, settings.photo_save_dir, mid)
     except Exception as exc:
-        logger.warning("analyze_image.save_original failed moment_id=%s error=%s", mid, exc)
-        response.error = (response.error or "") + f" Saving original photo failed: {exc}."
+        logger.warning(
+            "analyze_image.save_original failed moment_id=%s error=%s", mid, exc
+        )
+        response.error = (
+            response.error or ""
+        ) + f" Saving original photo failed: {exc}."
 
     # ── EXIF ──────────────────────────────────────────────────────────────────
     t0 = time.monotonic()
@@ -184,7 +140,9 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
             [v[0] for v in detected_vehicles],
         )
     except Exception as exc:
-        logger.error("analyze_image.vehicle_detection failed moment_id=%s error=%s", mid, exc)
+        logger.error(
+            "analyze_image.vehicle_detection failed moment_id=%s error=%s", mid, exc
+        )
         response.error = (response.error or "") + f" Vehicle detection failed: {exc}."
 
     # ── Plate ALPR ────────────────────────────────────────────────────────────
@@ -229,7 +187,9 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
         )
     except Exception as exc:
         logger.error("analyze_image.motor_attrs failed moment_id=%s error=%s", mid, exc)
-        response.error = (response.error or "") + f" Motor attribute pipeline failed: {exc}."
+        response.error = (
+            response.error or ""
+        ) + f" Motor attribute pipeline failed: {exc}."
 
     # ── Vehicle ↔ plate matching ───────────────────────────────────────────────
     from ..models.schemas import VehicleDetection
@@ -271,7 +231,7 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
 
                 saved_path = saved_plate_paths.get(matched_plate_index)
                 if saved_path is None:
-                    saved_path = _save_plate_image(
+                    saved_path = save_jpeg(
                         matched_plate.crop, settings.plate_save_dir, mid
                     )
                     saved_plate_paths[matched_plate_index] = saved_path
@@ -321,7 +281,7 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
         try:
             saved_path = saved_plate_paths.get(plate_index)
             if saved_path is None:
-                saved_path = _save_plate_image(
+                saved_path = save_jpeg(
                     unmatched_plate.crop, settings.plate_save_dir, mid
                 )
                 saved_plate_paths[plate_index] = saved_path
@@ -372,8 +332,12 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
     # ── CLIP embedding ────────────────────────────────────────────────────────
     t0 = time.monotonic()
     try:
-        response.embedding = get_image_embedding(image, model_name=settings.clip_model_name)
-        logger.debug("analyze_image.clip_embed done ms=%d", int((time.monotonic() - t0) * 1000))
+        response.embedding = get_image_embedding(
+            image, model_name=settings.clip_model_name
+        )
+        logger.debug(
+            "analyze_image.clip_embed done ms=%d", int((time.monotonic() - t0) * 1000)
+        )
     except Exception as exc:
         logger.error("analyze_image.clip_embed failed moment_id=%s error=%s", mid, exc)
         response.error = (response.error or "") + f" CLIP embedding failed: {exc}."
@@ -381,7 +345,9 @@ def analyze_image(request: AnalyzeRequest, settings: Settings) -> AnalyzeRespons
     # ── Scene tags ────────────────────────────────────────────────────────────
     t0 = time.monotonic()
     try:
-        response.detected_tags = classify_scene_tags(image, model_name=settings.clip_model_name)
+        response.detected_tags = classify_scene_tags(
+            image, model_name=settings.clip_model_name
+        )
         logger.debug(
             "analyze_image.scene_tags done ms=%d tags=%s",
             int((time.monotonic() - t0) * 1000),

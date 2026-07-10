@@ -2,6 +2,10 @@ from typing import Optional
 
 from PIL import Image
 
+from ..config import get_settings
+from .model_cache import is_model_ready as _cache_is_model_ready
+from .model_cache import load_cached_model
+
 # Maps COCO class IDs to Captura vehicle type enum values
 _COCO_TO_VEHICLE_TYPE: dict[int, str] = {
     1: "BICYCLE",
@@ -11,24 +15,23 @@ _COCO_TO_VEHICLE_TYPE: dict[int, str] = {
     7: "TRUCK",
 }
 
-_MODEL = None
-_MODEL_PATH: str = "yolov8n.pt"
+
+def _load_model(model_path: str):
+    """Load a YOLOv8 model from ``model_path``."""
+    from ultralytics import YOLO
+
+    return YOLO(model_path)
 
 
 def _get_model(model_path: str):
-    """Lazy-load YOLOv8 model on first use."""
-    global _MODEL, _MODEL_PATH
-    if _MODEL is None or model_path != _MODEL_PATH:
-        from ultralytics import YOLO
-        _MODEL = YOLO(model_path)
-        _MODEL_PATH = model_path
-    return _MODEL
+    """Lazy-load YOLOv8 model on first use (cached per path)."""
+    return load_cached_model(model_path, _load_model)
 
 
 def detect_vehicle(
     image: Image.Image,
     model_path: str = "yolov8n.pt",
-    confidence_threshold: float = 0.5,
+    confidence_threshold: Optional[float] = None,
     vehicle_class_ids: Optional[list[int]] = None,
 ) -> list[tuple[str, float, list[int]]]:
     """
@@ -39,6 +42,8 @@ def detect_vehicle(
         where vehicle_type is one of Captura's VehicleTypeEnum values,
         and bbox is [x1, y1, x2, y2].
     """
+    if confidence_threshold is None:
+        confidence_threshold = get_settings().vehicle_confidence_threshold
     if vehicle_class_ids is None:
         vehicle_class_ids = list(_COCO_TO_VEHICLE_TYPE.keys())
 
@@ -56,7 +61,7 @@ def detect_vehicle(
                 continue
             if conf < confidence_threshold:
                 continue
-            
+
             bbox = [int(v) for v in box.xyxy[0].tolist()]
             vehicle_type = _COCO_TO_VEHICLE_TYPE.get(cls_id, "OTHER")
             detected_vehicles.append((vehicle_type, round(conf, 4), bbox))
@@ -68,8 +73,4 @@ def detect_vehicle(
 
 def is_model_ready(model_path: str = "yolov8n.pt") -> bool:
     """Check whether the YOLO model can be loaded without errors."""
-    try:
-        _get_model(model_path)
-        return True
-    except Exception:
-        return False
+    return _cache_is_model_ready(model_path, _load_model)

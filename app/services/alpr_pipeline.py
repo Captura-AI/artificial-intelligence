@@ -1,31 +1,14 @@
-from dataclasses import dataclass
 from typing import Optional
 
 from PIL import Image
 
+from ..models.internal import PlatePipelineResult
+from .geometry import _expand_bbox
 from .plate_detector import detect_plates
-from .plate_text_reader import PlateCharacterDetection, read_plate_characters
+from .plate_text_reader import read_plate_characters
 
-
-@dataclass
-class PlatePipelineResult:
-    text: Optional[str]
-    text_confidence: Optional[float]
-    detection_confidence: float
-    bbox: list[int]
-    crop: Image.Image
-    characters: list[PlateCharacterDetection]
-
-
-def _expand_bbox(bbox: list[int], image_size: tuple[int, int], padding_px: int) -> list[int]:
-    width, height = image_size
-    x1, y1, x2, y2 = bbox
-    return [
-        max(0, int(x1) - padding_px),
-        max(0, int(y1) - padding_px),
-        min(width, int(x2) + padding_px),
-        min(height, int(y2) + padding_px),
-    ]
+# Re-exported so existing callers can keep importing the DTO from this module.
+__all__ = ["PlatePipelineResult", "run_plate_alpr", "find_best_plate"]
 
 
 def run_plate_alpr(
@@ -34,7 +17,7 @@ def run_plate_alpr(
     reader_model_path: str,
     detector_confidence_threshold: float,
     reader_confidence_threshold: float,
-    padding_px: int = 15,
+    padding_px: int,
 ) -> list[PlatePipelineResult]:
     """
     Run the two-stage ALPR flow used in Colab.
@@ -87,7 +70,7 @@ def find_best_plate(
     reader_model_path: str,
     detector_confidence_threshold: float,
     reader_confidence_threshold: float,
-    padding_px: int = 15,
+    padding_px: int,
 ) -> Optional[PlatePipelineResult]:
     """
     Return the first padded plate detection that produces character output.

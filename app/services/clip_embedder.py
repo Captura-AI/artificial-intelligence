@@ -3,10 +3,9 @@ from typing import Optional
 import torch
 from PIL import Image
 
-_MODEL = None
-_PREPROCESS = None
-_DEVICE: str = "cpu"
-_MODEL_NAME: str = ""
+from ..config import get_settings
+from .model_cache import is_model_ready as _cache_is_model_ready
+from .model_cache import load_cached_model
 
 # Tags used for zero-shot scene classification
 _SCENE_TAGS = [
@@ -22,19 +21,24 @@ _SCENE_TAGS = [
     "crowd of people",
 ]
 
-_TAG_THRESHOLD = 0.2
+
+def _load_model(model_name: str) -> tuple:
+    """Load CLIP model + preprocess transform on the best available device.
+
+    Returns a ``(model, preprocess, device)`` tuple. Downloads the checkpoint on
+    first run (~350 MB).
+    """
+    import clip
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model, preprocess = clip.load(model_name, device=device)
+    model.eval()
+    return model, preprocess, device
 
 
-def _get_model(model_name: str = "ViT-B/32"):
-    """Lazy-load CLIP model (downloads on first run, ~350 MB)."""
-    global _MODEL, _PREPROCESS, _DEVICE, _MODEL_NAME
-    if _MODEL is None or model_name != _MODEL_NAME:
-        import clip
-        _DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-        _MODEL, _PREPROCESS = clip.load(model_name, device=_DEVICE)
-        _MODEL.eval()
-        _MODEL_NAME = model_name
-    return _MODEL, _PREPROCESS, _DEVICE
+def _get_model(model_name: str = "ViT-B/32") -> tuple:
+    """Lazy-load CLIP model on first use (cached per model name)."""
+    return load_cached_model(model_name, _load_model)
 
 
 def get_image_embedding(
@@ -64,6 +68,7 @@ def get_text_embedding(
     Returns a plain Python list of floats for Faiss search.
     """
     import clip
+
     model, _, device = _get_model(model_name)
 
     with torch.no_grad():
@@ -78,7 +83,7 @@ def classify_scene_tags(
     image: Image.Image,
     model_name: str = "ViT-B/32",
     tags: Optional[list[str]] = None,
-    threshold: float = _TAG_THRESHOLD,
+    threshold: Optional[float] = None,
 ) -> list[str]:
     """
     Use CLIP zero-shot classification to assign scene tags to an image.
@@ -88,6 +93,8 @@ def classify_scene_tags(
 
     if tags is None:
         tags = _SCENE_TAGS
+    if threshold is None:
+        threshold = get_settings().clip_tag_threshold
 
     model, preprocess, device = _get_model(model_name)
 
@@ -103,14 +110,12 @@ def classify_scene_tags(
 
         similarity = (image_features @ text_features.T).squeeze(0)
 
-    selected = [tags[i] for i, score in enumerate(similarity.tolist()) if score >= threshold]
+    selected = [
+        tags[i] for i, score in enumerate(similarity.tolist()) if score >= threshold
+    ]
     return selected
 
 
 def is_model_ready(model_name: str = "ViT-B/32") -> bool:
     """Check whether the CLIP model can be loaded."""
-    try:
-        _get_model(model_name)
-        return True
-    except Exception:
-        return False
+    return _cache_is_model_ready(model_name, _load_model)

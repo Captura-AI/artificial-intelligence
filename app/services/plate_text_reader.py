@@ -1,33 +1,31 @@
-from dataclasses import dataclass
 from typing import Optional
 
 from PIL import Image
 
-_MODEL = None
-_MODEL_PATH: str = ""
+from ..config import get_settings
+from ..models.internal import PlateCharacterDetection
+from .model_cache import is_model_ready as _cache_is_model_ready
+from .model_cache import load_cached_model
+from .utils import ensure_rgb
 
 
-@dataclass
-class PlateCharacterDetection:
-    text: str
-    confidence: float
-    bbox: list[int]
+def _load_model(model_path: str):
+    """Load the platreader.pt YOLOv8 character-detection model from ``model_path``."""
+    from ultralytics import YOLO
+
+    return YOLO(model_path)
 
 
 def _get_model(model_path: str):
-    """Lazy-load platreader.pt YOLOv8 character-detection model on first use."""
-    global _MODEL, _MODEL_PATH
-    if _MODEL is None or model_path != _MODEL_PATH:
-        from ultralytics import YOLO
-        _MODEL = YOLO(model_path)
-        _MODEL_PATH = model_path
-    return _MODEL
+    """Lazy-load platreader.pt character-detection model on first use (cached per path)."""
+    return load_cached_model(model_path, _load_model)
 
 
 def read_plate_characters(
     image: Image.Image,
     model_path: str = "platreader.pt",
-    confidence_threshold: float = 0.3,
+    *,
+    confidence_threshold: float,
 ) -> list[PlateCharacterDetection]:
     """
     Detect characters from a cropped license plate image using platreader.pt.
@@ -35,7 +33,7 @@ def read_plate_characters(
     Returns local character boxes in the cropped plate coordinate system.
     """
     model = _get_model(model_path)
-    rgb_image = image if image.mode == "RGB" else image.convert("RGB")
+    rgb_image = ensure_rgb(image)
     results = model(rgb_image, conf=confidence_threshold, verbose=False)
 
     chars: list[PlateCharacterDetection] = []
@@ -64,7 +62,7 @@ def read_plate_characters(
 def read_plate_text(
     image: Image.Image,
     model_path: str = "platreader.pt",
-    confidence_threshold: float = 0.3,
+    confidence_threshold: Optional[float] = None,
 ) -> tuple[Optional[str], Optional[float]]:
     """
     Read text from a cropped license plate image using platreader.pt.
@@ -76,6 +74,9 @@ def read_plate_text(
     Returns:
         (plate_text, mean_confidence) or (None, None) if no characters detected.
     """
+    if confidence_threshold is None:
+        confidence_threshold = get_settings().plate_confidence_threshold
+
     chars = read_plate_characters(
         image,
         model_path=model_path,
@@ -92,8 +93,4 @@ def read_plate_text(
 
 def is_model_ready(model_path: str = "platreader.pt") -> bool:
     """Check whether platreader.pt can be loaded without errors."""
-    try:
-        _get_model(model_path)
-        return True
-    except Exception:
-        return False
+    return _cache_is_model_ready(model_path, _load_model)

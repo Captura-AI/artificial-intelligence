@@ -1,23 +1,27 @@
 from PIL import Image
 
-_MODEL = None
-_MODEL_PATH: str = ""
+from .model_cache import is_model_ready as _cache_is_model_ready
+from .model_cache import load_cached_model
+from .utils import ensure_rgb
+
+
+def _load_model(model_path: str):
+    """Load the motortype.pt YOLOv8 model from ``model_path``."""
+    from ultralytics import YOLO
+
+    return YOLO(model_path)
 
 
 def _get_model(model_path: str):
-    """Lazy-load motortype.pt YOLOv8 model on first use."""
-    global _MODEL, _MODEL_PATH
-    if _MODEL is None or model_path != _MODEL_PATH:
-        from ultralytics import YOLO
-        _MODEL = YOLO(model_path)
-        _MODEL_PATH = model_path
-    return _MODEL
+    """Lazy-load motortype.pt YOLOv8 model on first use (cached per path)."""
+    return load_cached_model(model_path, _load_model)
 
 
 def detect_motor_types(
     image: Image.Image,
     model_path: str = "motortype.pt",
-    confidence_threshold: float = 0.4,
+    *,
+    confidence_threshold: float,
 ) -> list[tuple[str, float, list[int]]]:
     """
     Detect motorcycles and classify their body style using motortype.pt.
@@ -29,7 +33,7 @@ def detect_motor_types(
         Motocross, Scooter, Sport, Standard, Touring).
     """
     model = _get_model(model_path)
-    rgb_image = image if image.mode == "RGB" else image.convert("RGB")
+    rgb_image = ensure_rgb(image)
     results = model(rgb_image, conf=confidence_threshold, verbose=False)
 
     detections: list[tuple[str, float, list[int]]] = []
@@ -49,8 +53,4 @@ def detect_motor_types(
 
 def is_model_ready(model_path: str = "motortype.pt") -> bool:
     """Check whether motortype.pt can be loaded without errors."""
-    try:
-        _get_model(model_path)
-        return True
-    except Exception:
-        return False
+    return _cache_is_model_ready(model_path, _load_model)

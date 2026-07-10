@@ -2,18 +2,21 @@ from typing import Optional
 
 from PIL import Image
 
-_MODEL = None
-_MODEL_PATH: str = ""
+from .model_cache import is_model_ready as _cache_is_model_ready
+from .model_cache import load_cached_model
+from .utils import ensure_rgb
+
+
+def _load_model(model_path: str):
+    """Load the color.pt YOLOv8 classification model from ``model_path``."""
+    from ultralytics import YOLO
+
+    return YOLO(model_path)
 
 
 def _get_model(model_path: str):
-    """Lazy-load color.pt YOLOv8 classification model on first use."""
-    global _MODEL, _MODEL_PATH
-    if _MODEL is None or model_path != _MODEL_PATH:
-        from ultralytics import YOLO
-        _MODEL = YOLO(model_path)
-        _MODEL_PATH = model_path
-    return _MODEL
+    """Lazy-load color.pt YOLOv8 classification model on first use (cached per path)."""
+    return load_cached_model(model_path, _load_model)
 
 
 def classify_color(
@@ -29,7 +32,7 @@ def classify_color(
         (Biru, Emas, Hijau, Hitam, Kuning, Merah, Perak, Putih).
     """
     model = _get_model(model_path)
-    rgb_image = image if image.mode == "RGB" else image.convert("RGB")
+    rgb_image = ensure_rgb(image)
     results = model(rgb_image, verbose=False)
 
     if not results or results[0].probs is None:
@@ -43,8 +46,4 @@ def classify_color(
 
 def is_model_ready(model_path: str = "color.pt") -> bool:
     """Check whether color.pt can be loaded without errors."""
-    try:
-        _get_model(model_path)
-        return True
-    except Exception:
-        return False
+    return _cache_is_model_ready(model_path, _load_model)
